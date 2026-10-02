@@ -77,7 +77,7 @@ int64_t parseNativeOnnxPhonemeCode(const std::string &phonemeText) {
     if (phonemeText == "w") return 42;
     if (phonemeText == "y") return 43;
     if (phonemeText == "z") return 44;
-    throw std::runtime_error("未対応の phoneme です: " + phonemeText);
+    throw std::invalid_argument("未対応の phoneme です: " + phonemeText);
 }
 
 static bool isNativeOnnxJsonNumberStart(char character) {
@@ -110,30 +110,39 @@ static size_t findNativeOnnxJsonNumberEnd(const std::string &jsonText, size_t po
 static int64_t parseNativeOnnxJsonInt64At(const std::string &jsonText, size_t position, const std::string &fieldName) {
     position = skipNativeOnnxJsonSpaces(jsonText, position);
     if (position >= jsonText.size() || !isNativeOnnxJsonNumberStart(jsonText[position])) {
-        throw std::runtime_error(fieldName + " が数値ではありません");
+        throw std::invalid_argument(fieldName + " が数値ではありません");
     }
     size_t endPosition = findNativeOnnxJsonNumberEnd(jsonText, position);
-    return std::stoll(jsonText.substr(position, endPosition - position));
+    int64_t Value = 0;
+    auto Result = std::from_chars(jsonText.data() + position, jsonText.data() + endPosition, Value);
+    if (Result.ec != std::errc() || Result.ptr != jsonText.data() + endPosition) {
+        throw std::invalid_argument(fieldName + " が整数ではありません、または範囲外です");
+    }
+    return Value;
 }
 
 static uint64_t parseNativeOnnxJsonUint64At(const std::string &jsonText, size_t position, const std::string &fieldName) {
     position = skipNativeOnnxJsonSpaces(jsonText, position);
     if (position >= jsonText.size() || jsonText[position] == '-' || !isNativeOnnxJsonNumberStart(jsonText[position])) {
-        throw std::runtime_error(fieldName + " が非負整数ではありません");
+        throw std::invalid_argument(fieldName + " が非負整数ではありません");
     }
-    size_t endPosition = findNativeOnnxJsonNumberEnd(jsonText, position);
-    return std::stoull(jsonText.substr(position, endPosition - position));
+    int64_t Value = parseNativeOnnxJsonInt64At(jsonText, position, fieldName);
+    if (Value < 0) {
+        throw std::invalid_argument(fieldName + " が負数です");
+    }
+    return static_cast<uint64_t>(Value);
 }
 
 static float parseNativeOnnxJsonFloatAt(const std::string &jsonText, size_t position, const std::string &fieldName) {
     position = skipNativeOnnxJsonSpaces(jsonText, position);
     if (position >= jsonText.size() || !isNativeOnnxJsonNumberStart(jsonText[position])) {
-        throw std::runtime_error(fieldName + " が数値ではありません");
+        throw std::invalid_argument(fieldName + " が数値ではありません");
     }
     size_t endPosition = findNativeOnnxJsonNumberEnd(jsonText, position);
-    float parsedNumber = std::stof(jsonText.substr(position, endPosition - position));
-    if (!std::isfinite(parsedNumber)) {
-        throw std::runtime_error(fieldName + " が有限値ではありません");
+    size_t End = 0;
+    float parsedNumber = std::stof(jsonText.substr(position, endPosition - position), &End);
+    if (End != endPosition - position || !std::isfinite(parsedNumber)) {
+        throw std::invalid_argument(fieldName + " が有限値ではありません");
     }
     return parsedNumber;
 }
@@ -141,7 +150,7 @@ static float parseNativeOnnxJsonFloatAt(const std::string &jsonText, size_t posi
 static uint64_t requireNativeOnnxJsonUint64Field(const std::string &jsonText, const std::string &fieldName) {
     size_t valuePosition = findJsonFieldValuePosition(jsonText, fieldName);
     if (valuePosition == std::string::npos) {
-        throw std::runtime_error(fieldName + " がありません");
+        throw std::invalid_argument(fieldName + " がありません");
     }
     return parseNativeOnnxJsonUint64At(jsonText, valuePosition, fieldName);
 }
@@ -162,7 +171,7 @@ static bool extractNativeOnnxJsonOptionalInt64Field(const std::string &jsonText,
 static std::string requireNativeOnnxJsonStringField(const std::string &jsonText, const std::string &fieldName) {
     size_t valuePosition = findJsonFieldValuePosition(jsonText, fieldName);
     if (valuePosition == std::string::npos || valuePosition >= jsonText.size() || jsonText[valuePosition] != '"') {
-        throw std::runtime_error(fieldName + " がありません");
+        throw std::invalid_argument(fieldName + " がありません");
     }
     return decodeJsonString(jsonText, valuePosition);
 }
@@ -177,7 +186,7 @@ static bool extractNativeOnnxJsonOptionalStringField(const std::string &jsonText
         return false;
     }
     if (valuePosition >= jsonText.size() || jsonText[valuePosition] != '"') {
-        throw std::runtime_error(fieldName + " が文字列ではありません");
+        throw std::invalid_argument(fieldName + " が文字列ではありません");
     }
     stringValue = decodeJsonString(jsonText, valuePosition);
     return true;
@@ -186,7 +195,7 @@ static bool extractNativeOnnxJsonOptionalStringField(const std::string &jsonText
 static std::vector<float> parseNativeOnnxFloatArrayText(const std::string &arrayText, const std::string &fieldName) {
     size_t position = skipNativeOnnxJsonSpaces(arrayText, 0);
     if (position >= arrayText.size() || arrayText[position] != '[') {
-        throw std::runtime_error(fieldName + " が配列ではありません");
+        throw std::invalid_argument(fieldName + " が配列ではありません");
     }
     position++;
     std::vector<float> numberValues;
@@ -194,14 +203,14 @@ static std::vector<float> parseNativeOnnxFloatArrayText(const std::string &array
     while (true) {
         position = skipNativeOnnxJsonSpaces(arrayText, position);
         if (position >= arrayText.size()) {
-            throw std::runtime_error(fieldName + " 配列が閉じていません");
+            throw std::invalid_argument(fieldName + " 配列が閉じていません");
         }
         if (arrayText[position] == ']') {
             return numberValues;
         }
         if (!isFirstValue) {
             if (arrayText[position] != ',') {
-                throw std::runtime_error(fieldName + " 配列の区切りが不正です");
+                throw std::invalid_argument(fieldName + " 配列の区切りが不正です");
             }
             position = skipNativeOnnxJsonSpaces(arrayText, position + 1);
         }
@@ -211,26 +220,53 @@ static std::vector<float> parseNativeOnnxFloatArrayText(const std::string &array
     }
 }
 
+static std::vector<std::string> ParseObjects(const std::string &Json) {
+    std::vector<std::string> Objects;
+    size_t Position = skipNativeOnnxJsonSpaces(Json, 1);
+    if (Position < Json.size() && Json[Position] == ']') {
+        return Objects;
+    }
+    while (Position < Json.size()) {
+        if (Json[Position] != '{') {
+            throw std::invalid_argument("歌唱配列には object が必要です");
+        }
+        size_t End = findJsonMatchingToken(Json, Position, '{', '}');
+        if (End == std::string::npos) {
+            throw std::invalid_argument("歌唱 object が閉じていません");
+        }
+        Objects.push_back(Json.substr(Position, End - Position + 1));
+        Position = skipNativeOnnxJsonSpaces(Json, End + 1);
+        if (Position < Json.size() && Json[Position] == ']') {
+            return Objects;
+        }
+        if (Position >= Json.size() || Json[Position] != ',') {
+            break;
+        }
+        Position = skipNativeOnnxJsonSpaces(Json, Position + 1);
+    }
+    throw std::invalid_argument("歌唱配列が不正です");
+}
+
 std::vector<NativeOnnxScoreNote> parseNativeOnnxScore(const std::string &scoreText) {
     std::string notesJson = extractJsonArrayField(scoreText, "notes");
     if (notesJson.empty()) {
-        throw std::runtime_error("notes がありません");
+        throw std::invalid_argument("notes がありません");
     }
     std::vector<NativeOnnxScoreNote> scoreNotes;
-    for (const std::string &noteObject : splitJsonObjects(notesJson)) {
+    for (const std::string &noteObject : ParseObjects(notesJson)) {
         NativeOnnxScoreNote scoreNote;
         scoreNote.hasNoteId = extractNativeOnnxJsonOptionalStringField(noteObject, "id", scoreNote.noteId);
         scoreNote.hasKey = extractNativeOnnxJsonOptionalInt64Field(noteObject, "key", scoreNote.key);
         if (scoreNote.hasKey && (scoreNote.key < 0 || scoreNote.key > 127)) {
-            throw std::runtime_error("key が範囲外です");
+            throw std::invalid_argument("key が範囲外です");
         }
         scoreNote.frameLength = requireNativeOnnxJsonUint64Field(noteObject, "frame_length");
         scoreNote.lyric = requireNativeOnnxJsonStringField(noteObject, "lyric");
         if (!scoreNote.hasKey && !scoreNote.lyric.empty()) {
-            throw std::runtime_error("休符の lyric は空文字が必要です");
+            throw std::invalid_argument("休符の lyric は空文字が必要です");
         }
         if (scoreNote.hasKey && scoreNote.lyric.empty()) {
-            throw std::runtime_error("音符の lyric がありません");
+            throw std::invalid_argument("音符の lyric がありません");
         }
         if (scoreNote.hasKey) {
             scoreNote.mora = createNativeAudioQueryMoraFromText(scoreNote.lyric);
@@ -239,17 +275,17 @@ std::vector<NativeOnnxScoreNote> parseNativeOnnxScore(const std::string &scoreTe
         scoreNotes.push_back(std::move(scoreNote));
     }
     if (scoreNotes.empty()) {
-        throw std::runtime_error("notes が空です");
+        throw std::invalid_argument("notes が空です");
     }
     if (scoreNotes.front().hasKey) {
-        throw std::runtime_error("score の先頭は休符が必要です");
+        throw std::invalid_argument("score の先頭は休符が必要です");
     }
     return scoreNotes;
 }
 
 static std::vector<NativeOnnxFramePhoneme> parseNativeOnnxFramePhonemes(const std::string &phonemesJson) {
     std::vector<NativeOnnxFramePhoneme> framePhonemes;
-    for (const std::string &phonemeObject : splitJsonObjects(phonemesJson)) {
+    for (const std::string &phonemeObject : ParseObjects(phonemesJson)) {
         NativeOnnxFramePhoneme framePhoneme;
         framePhoneme.phoneme = requireNativeOnnxJsonStringField(phonemeObject, "phoneme");
         framePhoneme.frameLength = requireNativeOnnxJsonUint64Field(phonemeObject, "frame_length");
@@ -265,36 +301,43 @@ NativeOnnxFrameAudioQuery parseNativeOnnxFrameAudioQuery(const std::string &fram
     std::string volumeJson = extractJsonArrayField(frameAudioQueryText, "volume");
     std::string phonemesJson = extractJsonArrayField(frameAudioQueryText, "phonemes");
     if (f0Json.empty()) {
-        throw std::runtime_error("f0 がありません");
+        throw std::invalid_argument("f0 がありません");
     }
     if (volumeJson.empty()) {
-        throw std::runtime_error("volume がありません");
+        throw std::invalid_argument("volume がありません");
     }
     if (phonemesJson.empty()) {
-        throw std::runtime_error("phonemes がありません");
+        throw std::invalid_argument("phonemes がありません");
     }
     frameAudioQuery.f0Values = parseNativeOnnxFloatArrayText(f0Json, "f0");
     frameAudioQuery.volumeValues = parseNativeOnnxFloatArrayText(volumeJson, "volume");
     frameAudioQuery.phonemes = parseNativeOnnxFramePhonemes(phonemesJson);
     frameAudioQuery.volumeScale = static_cast<float>(extractNativeOnnxJsonNumberField(frameAudioQueryText, "volumeScale", frameAudioQuery.volumeScale));
-    frameAudioQuery.outputSamplingRate = static_cast<uint32_t>(extractNativeOnnxJsonNumberField(frameAudioQueryText, "outputSamplingRate", frameAudioQuery.outputSamplingRate));
+    if (findJsonFieldValuePosition(frameAudioQueryText, "outputSamplingRate") != std::string::npos) {
+        uint64_t Rate = requireNativeOnnxJsonUint64Field(frameAudioQueryText, "outputSamplingRate");
+        if (Rate == 0 || Rate > std::numeric_limits<uint32_t>::max()) {
+            throw std::invalid_argument("outputSamplingRate が不正です");
+        }
+        frameAudioQuery.outputSamplingRate = static_cast<uint32_t>(Rate);
+    }
     frameAudioQuery.outputStereo = extractNativeOnnxJsonBoolField(frameAudioQueryText, "outputStereo", frameAudioQuery.outputStereo);
     if (!std::isfinite(frameAudioQuery.volumeScale) || frameAudioQuery.volumeScale < 0.0f) {
-        throw std::runtime_error("volumeScale が不正です");
+        throw std::invalid_argument("volumeScale が不正です");
     }
     if (frameAudioQuery.outputSamplingRate == 0) {
-        throw std::runtime_error("outputSamplingRate が不正です");
+        throw std::invalid_argument("outputSamplingRate が不正です");
     }
     return frameAudioQuery;
 }
 
 static size_t calculateNativeOnnxFrameAudioQueryFrameCount(const NativeOnnxFrameAudioQuery &frameAudioQuery) {
     uint64_t frameCount = 0;
+    uint64_t Limit = std::min<uint64_t>(std::numeric_limits<size_t>::max(), std::numeric_limits<int64_t>::max());
     for (const NativeOnnxFramePhoneme &framePhoneme : frameAudioQuery.phonemes) {
-        frameCount += framePhoneme.frameLength;
-        if (frameCount > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
-            throw std::runtime_error("frame_length の合計が大きすぎます");
+        if (framePhoneme.frameLength > Limit - frameCount) {
+            throw std::invalid_argument("frame_length の合計が大きすぎます");
         }
+        frameCount += framePhoneme.frameLength;
     }
     return static_cast<size_t>(frameCount);
 }
@@ -302,10 +345,10 @@ static size_t calculateNativeOnnxFrameAudioQueryFrameCount(const NativeOnnxFrame
 void validateNativeOnnxParsedFrameAudioQuery(const NativeOnnxFrameAudioQuery &frameAudioQuery) {
     size_t frameCount = calculateNativeOnnxFrameAudioQueryFrameCount(frameAudioQuery);
     if (frameAudioQuery.f0Values.size() != frameCount) {
-        throw std::runtime_error("f0 の長さが frame_length 合計と一致しません");
+        throw std::invalid_argument("f0 の長さが frame_length 合計と一致しません");
     }
     if (frameAudioQuery.volumeValues.size() != frameCount) {
-        throw std::runtime_error("volume の長さが frame_length 合計と一致しません");
+        throw std::invalid_argument("volume の長さが frame_length 合計と一致しません");
     }
     for (const NativeOnnxFramePhoneme &framePhoneme : frameAudioQuery.phonemes) {
         parseNativeOnnxPhonemeCode(framePhoneme.phoneme);
@@ -376,17 +419,17 @@ std::vector<uint64_t> createNativeOnnxSongPhonemeLengths(const std::vector<Nativ
 
 NativeOnnxSongFrameInputs createNativeOnnxSongFrameInputs(const std::vector<NativeOnnxSongPhonemeFeature> &phonemeFeatures, const std::vector<NativeOnnxFramePhoneme> &framePhonemes) {
     if (phonemeFeatures.size() != framePhonemes.size()) {
-        throw std::runtime_error("score と frame_audio_query の phoneme 数が一致しません");
+        throw std::invalid_argument("score と frame_audio_query の phoneme 数が一致しません");
     }
     NativeOnnxSongFrameInputs frameInputs;
     for (size_t phonemeIndex = 0; phonemeIndex < phonemeFeatures.size(); phonemeIndex++) {
         const NativeOnnxSongPhonemeFeature &phonemeFeature = phonemeFeatures[phonemeIndex];
         const NativeOnnxFramePhoneme &framePhoneme = framePhonemes[phonemeIndex];
         if (parseNativeOnnxPhonemeCode(framePhoneme.phoneme) != phonemeFeature.phonemeCode) {
-            throw std::runtime_error("score と frame_audio_query の phoneme が一致しません");
+            throw std::invalid_argument("score と frame_audio_query の phoneme が一致しません");
         }
         if (framePhoneme.frameLength > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
-            throw std::runtime_error("frame_length が大きすぎます");
+            throw std::invalid_argument("frame_length が大きすぎます");
         }
         for (uint64_t frameIndex = 0; frameIndex < framePhoneme.frameLength; frameIndex++) {
             frameInputs.phonemeValues.push_back(phonemeFeature.phonemeCode);

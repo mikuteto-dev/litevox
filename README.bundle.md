@@ -2,6 +2,8 @@
 
 この bundle にはモデルデータを含めません。  
 実行に必要なモデルや ORT は、ユーザーが手元の配布物から与える前提です。
+動的リンク版は libsoxr も必要です。macOS では `brew install libsoxr`、
+Debian / Ubuntu では `libsoxr0` を用意してください。静的リンク版では追加不要です。
 
 ## 含まれるもの
 

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -201,8 +202,8 @@ void validateNativeAudioQuery(const std::string &audioQueryJson) {
     requireNativeJsonNumberField(audioQueryJson, "prePhonemeLength", "audio_query");
     requireNativeJsonNumberField(audioQueryJson, "postPhonemeLength", "audio_query");
     double samplingRate = requireNativeJsonNumberField(audioQueryJson, "outputSamplingRate", "audio_query");
-    if (samplingRate < 1.0 || std::floor(samplingRate) != samplingRate || static_cast<uint64_t>(samplingRate) % 24000 != 0) {
-        throw std::runtime_error("audio_query.outputSamplingRate は 24000 の倍数の整数が必要です");
+    if (samplingRate < 1.0 || std::floor(samplingRate) != samplingRate || samplingRate > std::numeric_limits<uint32_t>::max()) {
+        throw std::runtime_error("audio_query.outputSamplingRate は正の uint32 整数が必要です");
     }
     requireNativeJsonBoolField(audioQueryJson, "outputStereo", "audio_query");
     NativeJsonValueKind kanaKind = getNativeJsonFieldKind(audioQueryJson, "kana");

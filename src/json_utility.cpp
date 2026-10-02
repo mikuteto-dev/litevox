@@ -3,6 +3,10 @@
 #include "utility.hpp"
 
 #include <cctype>
+#include <charconv>
+#include <codecvt>
+#include <locale>
+#include <stdexcept>
 #include <iomanip>
 #include <sstream>
 
@@ -54,37 +58,87 @@ std::vector<std::string> splitJsonObjects(const std::string &jsonArrayText) {
     return objectTexts;
 }
 
-std::string decodeJsonString(const std::string &jsonText, size_t quotePosition) {
-    std::string decodedText;
-    for (size_t position = quotePosition + 1; position < jsonText.size(); position++) {
-        char character = jsonText[position];
-        if (character == '\\' && position + 1 < jsonText.size()) {
-            decodedText.push_back(jsonText[position + 1]);
-            position++;
-        } else if (character == '"') {
-            return decodedText;
-        } else {
-            decodedText.push_back(character);
+static char16_t ReadUnicode(const std::string &Json, size_t &Position) {
+    if (Position + 4 >= Json.size()) {
+        throw std::invalid_argument("JSON Unicode escape が不完全です");
+    }
+    uint32_t Value = 0;
+    const char *Start = Json.data() + Position + 1;
+    auto Result = std::from_chars(Start, Start + 4, Value, 16);
+    if (Result.ec != std::errc() || Result.ptr != Start + 4) {
+        throw std::invalid_argument("JSON Unicode escape が不正です");
+    }
+    Position += 4;
+    return static_cast<char16_t>(Value);
+}
+
+std::string decodeJsonString(const std::string &Json, size_t QuotePosition) {
+    if (QuotePosition >= Json.size() || Json[QuotePosition] != '"') {
+        throw std::invalid_argument("JSON string が必要です");
+    }
+    std::string Text;
+    for (size_t Position = QuotePosition + 1; Position < Json.size(); Position++) {
+        char Character = Json[Position];
+        if (Character == '"') {
+            return Text;
+        }
+        if (static_cast<unsigned char>(Character) < 0x20) {
+            throw std::invalid_argument("JSON string に制御文字があります");
+        }
+        if (Character != '\\') {
+            Text.push_back(Character);
+            continue;
+        }
+        if (++Position >= Json.size()) {
+            break;
+        }
+        switch (Json[Position]) {
+        case '"': case '\\': case '/': Text.push_back(Json[Position]); break;
+        case 'b': Text.push_back('\b'); break;
+        case 'f': Text.push_back('\f'); break;
+        case 'n': Text.push_back('\n'); break;
+        case 'r': Text.push_back('\r'); break;
+        case 't': Text.push_back('\t'); break;
+        case 'u': {
+            std::u16string Units(1, ReadUnicode(Json, Position));
+            if (Units[0] >= 0xd800 && Units[0] <= 0xdbff) {
+                if (Json.compare(Position + 1, 2, "\\u") != 0) {
+                    throw std::invalid_argument("JSON surrogate pair が不完全です");
+                }
+                Position += 2;
+                Units.push_back(ReadUnicode(Json, Position));
+                if (Units[1] < 0xdc00 || Units[1] > 0xdfff) {
+                    throw std::invalid_argument("JSON surrogate pair が不正です");
+                }
+            } else if (Units[0] >= 0xdc00 && Units[0] <= 0xdfff) {
+                throw std::invalid_argument("JSON surrogate pair が不正です");
+            }
+            Text += std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t>().to_bytes(Units);
+            break;
+        }
+        default: throw std::invalid_argument("JSON escape が不正です");
         }
     }
-    return decodedText;
+    throw std::invalid_argument("JSON string が閉じていません");
 }
 
 size_t findJsonFieldValuePosition(const std::string &jsonText, const std::string &fieldName) {
     std::string fieldPattern = "\"" + fieldName + "\"";
-    size_t fieldPosition = jsonText.find(fieldPattern);
-    if (fieldPosition == std::string::npos) {
-        return std::string::npos;
+    for (size_t Position = jsonText.find(fieldPattern); Position != std::string::npos; Position = jsonText.find(fieldPattern, Position + fieldPattern.size())) {
+        size_t Colon = Position + fieldPattern.size();
+        while (Colon < jsonText.size() && std::isspace(static_cast<unsigned char>(jsonText[Colon]))) {
+            Colon++;
+        }
+        if (Colon >= jsonText.size() || jsonText[Colon] != ':') {
+            continue;
+        }
+        size_t Value = Colon + 1;
+        while (Value < jsonText.size() && std::isspace(static_cast<unsigned char>(jsonText[Value]))) {
+            Value++;
+        }
+        return Value;
     }
-    size_t colonPosition = jsonText.find(':', fieldPosition + fieldPattern.size());
-    if (colonPosition == std::string::npos) {
-        return std::string::npos;
-    }
-    size_t valuePosition = colonPosition + 1;
-    while (valuePosition < jsonText.size() && std::isspace(static_cast<unsigned char>(jsonText[valuePosition]))) {
-        valuePosition++;
-    }
-    return valuePosition;
+    return std::string::npos;
 }
 
 std::string extractJsonStringField(const std::string &jsonText, const std::string &fieldName) {

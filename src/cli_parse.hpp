@@ -34,12 +34,14 @@ static void printUsage() {
         << "  litevox synthesis --speaker STYLE_ID --audio-query audio_query.json --out out.wav\n"
         << "  litevox stream --speaker STYLE_ID --text TEXT [--format wav|pcm] [--chunk-samples 1024] > out.wav\n"
         << "  litevox query --speaker STYLE_ID --text TEXT\n"
+        << "  litevox sing --score score.json [--teacher 6000] [--speaker 3000] --out out.wav\n"
         << "  litevox sing-query --score score.json [--speaker 6000] [--out frame_audio_query.json]\n"
         << "  litevox sing-f0 --score score.json --frame-audio-query frame_audio_query.json [--speaker 6000]\n"
         << "  litevox sing-volume --score score.json --frame-audio-query frame_audio_query.json [--speaker 6000]\n"
         << "  litevox frame-synthesis --frame-audio-query frame_audio_query.json [--speaker 3000] --out out.wav\n"
         << "  litevox server [--port 50021] [--workers 4] [--acceleration-mode auto|cpu|gpu] [--cpu-threads N] [--enable_cancellable_synthesis] [--preload]\n"
         << "  litevox speakers\n"
+        << "  litevox singers\n"
         << "  litevox deps\n"
         << "  litevox devices\n"
         << "  litevox version\n"
@@ -90,6 +92,7 @@ static void printUsage() {
         << "  --add-http-path PATH  add another HTTP bench path\n"
         << "  --keep-alive        reuse one HTTP connection in bench-http\n"
         << "  --speaker ID        style ID from `litevox models`\n"
+        << "  --teacher ID        query style for sing; default 6000\n"
         << "  --speakers IDS      comma-separated style IDs for bench/bench-http\n"
         << "  --text TEXT         Japanese text\n"
         << "  --add-text TEXT     add another text for bench/bench-http\n"
@@ -132,6 +135,15 @@ static void applyStateDirectory(CliOptions &cliOptions, const fs::path &stateDir
     cliOptions.runtimePaths.libraryDirectory = stateDirectory / "core_libraries";
 }
 
+static uint32_t ParseStyle(const std::string &Text) {
+    uint32_t Value = 0;
+    auto Result = std::from_chars(Text.data(), Text.data() + Text.size(), Value);
+    if (Result.ec != std::errc() || Result.ptr != Text.data() + Text.size()) {
+        throw std::runtime_error("style ID が不正です: " + Text);
+    }
+    return Value;
+}
+
 static std::vector<uint32_t> parseSpeakerList(const std::string &speakerListText) {
     std::vector<uint32_t> speakerIds;
     std::stringstream speakerStream(speakerListText);
@@ -140,7 +152,7 @@ static std::vector<uint32_t> parseSpeakerList(const std::string &speakerListText
         if (speakerToken.empty()) {
             throw std::runtime_error("--speakers に空の要素があります");
         }
-        speakerIds.push_back(static_cast<uint32_t>(std::stoul(speakerToken)));
+        speakerIds.push_back(ParseStyle(speakerToken));
     }
     if (speakerIds.empty()) {
         throw std::runtime_error("--speakers が空です");
@@ -318,6 +330,10 @@ static CliOptions parseCliOptions(int argc, char **argv) {
             argumentIndex++;
         } else if (commandText == "query") {
             cliOptions.commandMode = CommandMode::Query;
+            argumentIndex++;
+        } else if (commandText == "sing") {
+            cliOptions.commandMode = CommandMode::Sing;
+            cliOptions.speaker = 3000;
             argumentIndex++;
         } else if (commandText == "sing-query") {
             cliOptions.commandMode = CommandMode::SingQuery;
@@ -529,8 +545,8 @@ static CliOptions parseCliOptions(int argc, char **argv) {
                     argumentIndex++;
                 }
             }
-        } else if (commandText == "speakers") {
-            cliOptions.commandMode = CommandMode::Speakers;
+        } else if (commandText == "speakers" || commandText == "singers") {
+            cliOptions.commandMode = commandText == "singers" ? CommandMode::Singers : CommandMode::Speakers;
             argumentIndex++;
         } else if (commandText == "deps" || commandText == "dependencies") {
             cliOptions.commandMode = CommandMode::Deps;
@@ -657,8 +673,13 @@ static CliOptions parseCliOptions(int argc, char **argv) {
             }
         } else if (argumentText == "--enable_cancellable_synthesis" || argumentText == "--enable-cancellable-synthesis") {
             cliOptions.runtimePaths.enableCancellableSynthesis = true;
+        } else if (argumentText == "--teacher") {
+            if (cliOptions.commandMode != CommandMode::Sing) {
+                throw std::runtime_error("--teacher は sing 専用です");
+            }
+            cliOptions.Teacher = ParseStyle(requireValue(argumentText));
         } else if (argumentText == "--speaker") {
-            cliOptions.speaker = static_cast<uint32_t>(std::stoul(requireValue(argumentText)));
+            cliOptions.speaker = ParseStyle(requireValue(argumentText));
             cliOptions.benchSpeakers.clear();
         } else if (argumentText == "--speakers") {
             cliOptions.benchSpeakers = parseSpeakerList(requireValue(argumentText));

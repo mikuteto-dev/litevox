@@ -2,6 +2,10 @@ CXX ?= clang++
 CXXFLAGS ?= -std=c++17 -O3 -DNDEBUG -Wall -Wextra -Wpedantic
 LDFLAGS ?=
 LDLIBS ?= -lz
+SOXR_CFLAGS ?= $(shell pkg-config --cflags soxr)
+SOXR_LIBS ?= $(shell pkg-config --libs soxr)
+CXXFLAGS += $(SOXR_CFLAGS)
+LDLIBS += $(SOXR_LIBS)
 SDKROOT ?= $(shell xcrun --show-sdk-path 2>/dev/null)
 BUILD_DIR ?= build
 TARGET ?= $(BUILD_DIR)/litevox
@@ -13,10 +17,9 @@ BUNDLE_ARCHIVE_SHA256 ?= $(BUNDLE_ARCHIVE).sha256
 CORE_FORK_DIR ?= core-fork/voicevox_core
 CORE_FORK_PROFILE ?= talk-only
 CORE_FORK_LIB ?= $(CORE_FORK_DIR)/target/c-api/libvoicevox_core.dylib
-OPEN_JTALK_SYS_DIRS := $(sort $(wildcard $(CORE_FORK_DIR)/target/c-api/build/open_jtalk-sys-*/out))
-OPEN_JTALK_SYS_DIR ?= $(firstword $(OPEN_JTALK_SYS_DIRS))
-OPEN_JTALK_INCLUDE_DIR ?= $(OPEN_JTALK_SYS_DIR)/include
-OPEN_JTALK_LIB ?= $(OPEN_JTALK_SYS_DIR)/lib/libopenjtalk.a
+OPEN_JTALK_DIR ?= $(BUILD_DIR)/openjtalk
+OPEN_JTALK_INCLUDE_DIR ?= $(OPEN_JTALK_DIR)/include
+OPEN_JTALK_LIB ?= $(OPEN_JTALK_DIR)/lib/libopenjtalk.a
 SRC := $(sort $(wildcard src/*.cpp))
 OBJ := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(SRC))
 DEP := $(OBJ:.o=.d)
@@ -35,11 +38,29 @@ all: $(TARGET)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(TARGET): $(OBJ)
+$(TARGET): $(OBJ) $(OPEN_JTALK_LIB)
 	$(CXX) $(OBJ) -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(BUILD_DIR)/openjtalk-src/src/CMakeLists.txt: | $(BUILD_DIR)
+	git clone --depth 1 --branch 1.11 https://github.com/VOICEVOX/open_jtalk.git $(BUILD_DIR)/openjtalk-src
+
+ifeq ($(OPEN_JTALK_LIB),$(OPEN_JTALK_DIR)/lib/libopenjtalk.a)
+$(OPEN_JTALK_LIB): $(BUILD_DIR)/openjtalk-src/src/CMakeLists.txt
+	cmake -S $(BUILD_DIR)/openjtalk-src/src -B $(BUILD_DIR)/openjtalk-cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$(abspath $(OPEN_JTALK_DIR))
+	+cmake --build $(BUILD_DIR)/openjtalk-cmake --parallel
+	cmake --install $(BUILD_DIR)/openjtalk-cmake
+endif
+
+$(BUILD_DIR)/native_text_query.o: $(OPEN_JTALK_LIB)
 
 $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD_DIR)/Compatibility: tests/Compatibility.cpp $(filter-out $(BUILD_DIR)/main.o,$(OBJ)) $(OPEN_JTALK_LIB)
+	$(CXX) $(CXXFLAGS) -UNDEBUG -Isrc $< $(filter-out $(BUILD_DIR)/main.o,$(OBJ)) -o $@ $(LDFLAGS) $(LDLIBS)
+
+check: $(BUILD_DIR)/Compatibility
+	./$(BUILD_DIR)/Compatibility
 
 dist: $(TARGET)
 	mkdir -p $(DIST_DIR)
@@ -103,7 +124,7 @@ ifeq ($(UNAME_S),Darwin)
 	codesign --force --sign - $(DIST_DIR)/libvoicevox_core_fork.dylib
 endif
 
-.PHONY: all clean dist verify-runtime-from-archives verify-cli-smoke verify-bootstrap-bundle bootstrap-bundle bootstrap-bundle-archive core-fork-check core-fork-build core-fork-dist force-dep-rebuild
+.PHONY: all check clean dist verify-runtime-from-archives verify-cli-smoke verify-bootstrap-bundle bootstrap-bundle bootstrap-bundle-archive core-fork-check core-fork-build core-fork-dist force-dep-rebuild
 
 -include $(DEP)
 

@@ -311,7 +311,7 @@ NativeAudioQueryMora createNativeAudioQueryMoraFromText(const std::string &moraT
     NativeAudioQueryMora mora;
     size_t matchedBytes = 0;
     if (!findNativeMoraAt(normalizedText, 0, mora, matchedBytes) || matchedBytes != normalizedText.size()) {
-        throw std::runtime_error("未知の歌詞モーラです: " + moraText);
+        throw std::invalid_argument("未知の歌詞モーラです: " + moraText);
     }
     return mora;
 }

@@ -72,7 +72,7 @@ static std::vector<float> runNativeOnnxSingF0Values(NativeOnnxApi &nativeOnnxApi
 
 static std::vector<float> runNativeOnnxSingVolumeValues(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const std::vector<ModelAssetRecord> &modelAssets, const NativeOnnxSongFrameInputs &frameInputs, const std::vector<float> &f0Values, uint32_t styleId, uint16_t cpuThreadCount, bool shouldUseVvBinConfig) {
     if (f0Values.size() != frameInputs.phonemeValues.size()) {
-        throw std::runtime_error("f0 の長さが frame 数と一致しません");
+        throw std::invalid_argument("f0 の長さが frame 数と一致しません");
     }
     const ModelAssetRecord &volumeAsset = requireNativeOnnxModelAsset(modelAssets, "models/psv.bin");
     int64_t innerVoiceId = resolveNativeOnnxInnerVoiceId(volumeAsset, "singing_teacher", styleId);

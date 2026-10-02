@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
@@ -287,12 +288,21 @@ static int runCommand(const CliOptions &cliOptions) {
                 throw std::runtime_error("--frame-audio-query が必要です");
             }
             writeCliTextOutput(cliOptions.outputPath, createSingFrameVolume(*runtimeState, readTextFile(cliOptions.scorePath), readTextFile(cliOptions.frameAudioQueryPath), cliOptions.speaker));
-        } else if (cliOptions.commandMode == CommandMode::FrameSynthesis) {
-            fs::path frameAudioQueryPath = cliOptions.frameAudioQueryPath.empty() ? cliOptions.audioQueryPath : cliOptions.frameAudioQueryPath;
-            if (frameAudioQueryPath.empty()) {
-                throw std::runtime_error("--frame-audio-query が必要です");
+        } else if (cliOptions.commandMode == CommandMode::FrameSynthesis || cliOptions.commandMode == CommandMode::Sing) {
+            std::string Query;
+            if (cliOptions.commandMode == CommandMode::Sing) {
+                if (cliOptions.scorePath.empty()) {
+                    throw std::runtime_error("--score が必要です");
+                }
+                Query = createSingFrameAudioQuery(*runtimeState, readTextFile(cliOptions.scorePath), cliOptions.Teacher);
+            } else {
+                fs::path frameAudioQueryPath = cliOptions.frameAudioQueryPath.empty() ? cliOptions.audioQueryPath : cliOptions.frameAudioQueryPath;
+                if (frameAudioQueryPath.empty()) {
+                    throw std::runtime_error("--frame-audio-query が必要です");
+                }
+                Query = readTextFile(frameAudioQueryPath);
             }
-            std::vector<uint8_t> wavBytes = synthesizeFrameAudioQuery(*runtimeState, readTextFile(frameAudioQueryPath), cliOptions.speaker);
+            std::vector<uint8_t> wavBytes = synthesizeFrameAudioQuery(*runtimeState, Query, cliOptions.speaker);
             AudioStreamPayload audioStreamPayload = createAudioStreamPayload(wavBytes, cliOptions.audioStreamFormat);
             if (cliOptions.outputPath == "-") {
                 std::cout.write(reinterpret_cast<const char *>(audioStreamPayload.audioBytes.data()), static_cast<std::streamsize>(audioStreamPayload.audioBytes.size()));
@@ -310,6 +320,8 @@ static int runCommand(const CliOptions &cliOptions) {
             std::cout << "models\t" << runtimeState->voiceModels.size() << "\n";
             std::cout << "styles\t" << styleCount << "\n";
             std::cout << createModelTable(*runtimeState);
+        } else if (cliOptions.commandMode == CommandMode::Singers) {
+            std::cout << createSingersJson(runtimeState->combinedMetasJson, createCharacterSupportedFeaturesJsons(runtimeState->characterResources)) << "\n";
         } else if (cliOptions.commandMode == CommandMode::Speakers) {
             std::cout << createSpeakersJson(runtimeState->combinedMetasJson, getCoreBackendCapabilities(runtimeState->coreBackend).supportsMorphing, createCharacterSupportedFeaturesJsons(runtimeState->characterResources)) << "\n";
         } else if (cliOptions.commandMode == CommandMode::Deps) {

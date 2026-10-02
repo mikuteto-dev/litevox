@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <limits>
+#include <soxr.h>
 
 static std::string createNativeOnnxMoraJson(const NativeOnnxMora &mora) {
     std::string jsonText = "{\"text\":" + quoteJsonString(mora.text) + ",";
@@ -296,33 +298,73 @@ static std::vector<float> createNativeOnnxWaveValuesWithoutDecoderPadding(const 
     return createNativeOnnxWaveValuesWithoutDecoderFramePadding(waveTensor, nativeOnnxDecoderPaddingFrames, nativeOnnxDecoderPaddingFrames);
 }
 
-static uint32_t calculateNativeOnnxOutputRepeatCount(const NativeOnnxAudioQuerySettings &audioQuerySettings) {
-    uint16_t channels = audioQuerySettings.outputStereo ? 2 : 1;
-    uint32_t repeatCount = (audioQuerySettings.outputSamplingRate / nativeOnnxDefaultSamplingRate) * static_cast<uint32_t>(channels);
-    if (repeatCount == 0) {
-        throw std::runtime_error("native synthesis の outputSamplingRate が不正です");
+NativeOnnxPcm::NativeOnnxPcm(const NativeOnnxAudioQuerySettings &Settings) : Settings(Settings) {
+    if (Settings.outputSamplingRate == 0 || !std::isfinite(Settings.volumeScale) || Settings.volumeScale < 0) {
+        throw std::invalid_argument("PCM 出力設定が不正です");
     }
-    return repeatCount;
+    if (Settings.outputSamplingRate != nativeOnnxDefaultSamplingRate) {
+        soxr_error_t Error = nullptr;
+        Resampler = soxr_create(nativeOnnxDefaultSamplingRate, Settings.outputSamplingRate, 1, &Error, nullptr, nullptr, nullptr);
+        if (Error) {
+            std::string Message = Error;
+            soxr_delete(Resampler);
+            throw std::runtime_error("resampler: " + Message);
+        }
+    }
 }
 
-std::vector<uint8_t> createNativeOnnxPcmBytes(const std::vector<float> &waveValues, const NativeOnnxAudioQuerySettings &audioQuerySettings) {
-    uint32_t repeatCount = calculateNativeOnnxOutputRepeatCount(audioQuerySettings);
-    std::vector<uint8_t> pcmBytes;
-    pcmBytes.reserve(waveValues.size() * repeatCount * sizeof(int16_t));
-    for (float waveValue : waveValues) {
-        float scaledValue = waveValue * audioQuerySettings.volumeScale;
-        if (scaledValue > 1.0f) {
-            scaledValue = 1.0f;
-        } else if (scaledValue < -1.0f) {
-            scaledValue = -1.0f;
+NativeOnnxPcm::~NativeOnnxPcm() {
+    soxr_delete(Resampler);
+}
+
+std::vector<uint8_t> NativeOnnxPcm::Convert(const std::vector<float> &Wave, bool Final) {
+    std::vector<float> Output;
+    const std::vector<float> *Values = &Wave;
+    if (Resampler) {
+        double Count = std::ceil(Wave.size() * static_cast<double>(Settings.outputSamplingRate) / nativeOnnxDefaultSamplingRate + soxr_delay(Resampler)) + 1;
+        uint32_t Channels = Settings.outputStereo ? 2 : 1;
+        if (Count > (std::numeric_limits<uint32_t>::max() - 44) / (Channels * sizeof(int16_t))) {
+            throw std::invalid_argument("PCM 出力が WAV のサイズ上限を超えます");
         }
-        int16_t sampleValue = static_cast<int16_t>(scaledValue * 32767.0f);
-        for (uint32_t repeatIndex = 0; repeatIndex < repeatCount; repeatIndex++) {
-            pcmBytes.push_back(static_cast<uint8_t>(sampleValue & 0xff));
-            pcmBytes.push_back(static_cast<uint8_t>((static_cast<uint16_t>(sampleValue) >> 8) & 0xff));
+        Output.resize(static_cast<size_t>(Count));
+        size_t Used = 0;
+        size_t Written = 0;
+        if (!Wave.empty()) {
+            soxr_error_t Error = soxr_process(Resampler, Wave.data(), Wave.size(), &Used, Output.data(), Output.size(), &Written);
+            if (Error || Used != Wave.size()) {
+                throw std::runtime_error(std::string("resampler: ") + (Error ? Error : "入力を処理しきれません"));
+            }
+        }
+        if (Final) {
+            size_t Tail = 0;
+            soxr_error_t Error = soxr_process(Resampler, nullptr, 0, nullptr, Output.data() + Written, Output.size() - Written, &Tail);
+            if (Error) {
+                throw std::runtime_error(std::string("resampler: ") + Error);
+            }
+            Written += Tail;
+        }
+        Output.resize(Written);
+        Values = &Output;
+    }
+    uint32_t Channels = Settings.outputStereo ? 2 : 1;
+    std::vector<uint8_t> Bytes;
+    Bytes.reserve(Values->size() * Channels * sizeof(int16_t));
+    for (float Value : *Values) {
+        float Scaled = Value * Settings.volumeScale;
+        if (!std::isfinite(Scaled)) {
+            throw std::runtime_error("PCM に有限でない値があります");
+        }
+        int16_t Sample = static_cast<int16_t>(std::clamp(Scaled, -1.0f, 1.0f) * 32767.0f);
+        for (uint32_t Channel = 0; Channel < Channels; Channel++) {
+            Bytes.push_back(static_cast<uint8_t>(Sample & 0xff));
+            Bytes.push_back(static_cast<uint8_t>((static_cast<uint16_t>(Sample) >> 8) & 0xff));
         }
     }
-    return pcmBytes;
+    return Bytes;
+}
+
+std::vector<uint8_t> createNativeOnnxPcmBytes(const std::vector<float> &Wave, const NativeOnnxAudioQuerySettings &Settings) {
+    return NativeOnnxPcm(Settings).Convert(Wave, true);
 }
 
 static std::vector<uint8_t> createNativeOnnxWavBytes(const NativeOnnxTraceInput &waveTensor, const NativeOnnxAudioQuerySettings &audioQuerySettings) {
@@ -389,8 +431,12 @@ static NativeOnnxPcmStreamInfo createNativeOnnxPcmStreamInfo(const NativeOnnxAud
     streamInfo.sampleRate = audioQuerySettings.outputSamplingRate;
     streamInfo.channels = audioQuerySettings.outputStereo ? 2 : 1;
     streamInfo.bitsPerSample = 16;
-    uint32_t repeatCount = calculateNativeOnnxOutputRepeatCount(audioQuerySettings);
-    streamInfo.pcmBytes = static_cast<uintptr_t>(coreFrameCount * nativeOnnxSamplesPerFrame * repeatCount * sizeof(int16_t));
+    double Samples = std::round(static_cast<double>(coreFrameCount) * nativeOnnxSamplesPerFrame * streamInfo.sampleRate / nativeOnnxDefaultSamplingRate);
+    double Bytes = Samples * streamInfo.channels * sizeof(int16_t);
+    if (Bytes > std::numeric_limits<uint32_t>::max() - 44) {
+        throw std::invalid_argument("PCM 出力が WAV のサイズ上限を超えます");
+    }
+    streamInfo.pcmBytes = static_cast<uintptr_t>(Bytes);
     return streamInfo;
 }
 
@@ -529,6 +575,7 @@ void streamNativeOnnxModelAssetsAudioQueryPcm(const fs::path &onnxruntimeLibrary
         size_t paddingFrameCount = nativeOnnxDecoderPaddingFrames * 2;
         size_t coreFrameCount = paddedFrameCount > paddingFrameCount ? paddedFrameCount - paddingFrameCount : 0;
         NativeOnnxPcmStreamInfo streamInfo = createNativeOnnxPcmStreamInfo(audioQuerySettings, coreFrameCount);
+        NativeOnnxPcm Pcm(audioQuerySettings);
         startStream(streamInfo);
         size_t safeChunkFrames = std::max({static_cast<size_t>(1), chunkFrames, nativeOnnxDecoderMinimumChunkFrames});
         size_t contextFrames = safeChunkFrames;
@@ -540,7 +587,7 @@ void streamNativeOnnxModelAssetsAudioQueryPcm(const fs::path &onnxruntimeLibrary
             NativeOnnxDecoderChunkInputSet chunkInputSet = createNativeOnnxDecoderChunkInputs(decoderInputs, coreStartFrame, coreEndFrame, contextFrames);
             std::vector<NativeOnnxTraceInput> decodeOutputs = runNativeOnnxModelAssetBytes(nativeOnnxApi, nullptr, decodeAsset, decodeBytes, chunkInputSet.tensors, cpuThreadCount, shouldUseVvBinConfig);
             std::vector<float> waveValues = createNativeOnnxWaveValuesWithoutDecoderFramePadding(requireNativeOnnxTensor(decodeOutputs, "wave"), chunkInputSet.frontCropFrames, chunkInputSet.backCropFrames);
-            std::vector<uint8_t> pcmBytes = createNativeOnnxPcmBytes(waveValues, audioQuerySettings);
+            std::vector<uint8_t> pcmBytes = Pcm.Convert(waveValues, coreEndFrame == coreFrameCount);
             if (!pcmBytes.empty()) {
                 writeChunk(pcmBytes.data(), pcmBytes.size());
             }
@@ -613,6 +660,7 @@ void streamNativeOnnxModelAssetsAudioQueryPcm(const NativeOnnxRuntimeState &runt
         size_t paddingFrameCount = nativeOnnxDecoderPaddingFrames * 2;
         size_t coreFrameCount = paddedFrameCount > paddingFrameCount ? paddedFrameCount - paddingFrameCount : 0;
         NativeOnnxPcmStreamInfo streamInfo = createNativeOnnxPcmStreamInfo(audioQuerySettings, coreFrameCount);
+        NativeOnnxPcm Pcm(audioQuerySettings);
         startStream(streamInfo);
         size_t safeChunkFrames = std::max({static_cast<size_t>(1), chunkFrames, nativeOnnxDecoderMinimumChunkFrames});
         size_t contextFrames = safeChunkFrames;
@@ -626,7 +674,7 @@ void streamNativeOnnxModelAssetsAudioQueryPcm(const NativeOnnxRuntimeState &runt
                 ? runNativeOnnxModelAssetBytes(nativeOnnxApi, &runtimeState, decodeAsset, decodeBytes, chunkInputSet.tensors, cpuThreadCount, true)
                 : runNativeOnnxModelAssetBytes(nativeOnnxApi, &runtimeState, decodeAsset, chunkInputSet.tensors, cpuThreadCount, false);
             std::vector<float> waveValues = createNativeOnnxWaveValuesWithoutDecoderFramePadding(requireNativeOnnxTensor(decodeOutputs, "wave"), chunkInputSet.frontCropFrames, chunkInputSet.backCropFrames);
-            std::vector<uint8_t> pcmBytes = createNativeOnnxPcmBytes(waveValues, audioQuerySettings);
+            std::vector<uint8_t> pcmBytes = Pcm.Convert(waveValues, coreEndFrame == coreFrameCount);
             if (!pcmBytes.empty()) {
                 writeChunk(pcmBytes.data(), pcmBytes.size());
             }

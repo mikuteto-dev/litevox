@@ -194,7 +194,11 @@ NativeOnnxAudioQuerySettings parseNativeOnnxAudioQuerySettings(const std::string
     audioQuerySettings.volumeScale = static_cast<float>(extractNativeOnnxJsonNumberField(audioQueryText, "volumeScale", audioQuerySettings.volumeScale));
     audioQuerySettings.prePhonemeLength = static_cast<float>(extractNativeOnnxJsonNumberField(audioQueryText, "prePhonemeLength", audioQuerySettings.prePhonemeLength));
     audioQuerySettings.postPhonemeLength = static_cast<float>(extractNativeOnnxJsonNumberField(audioQueryText, "postPhonemeLength", audioQuerySettings.postPhonemeLength));
-    audioQuerySettings.outputSamplingRate = static_cast<uint32_t>(extractNativeOnnxJsonNumberField(audioQueryText, "outputSamplingRate", audioQuerySettings.outputSamplingRate));
+    double Rate = extractNativeOnnxJsonNumberField(audioQueryText, "outputSamplingRate", audioQuerySettings.outputSamplingRate);
+    if (!std::isfinite(Rate) || Rate < 1 || Rate > std::numeric_limits<uint32_t>::max() || std::floor(Rate) != Rate) {
+        throw std::invalid_argument("outputSamplingRate が不正です");
+    }
+    audioQuerySettings.outputSamplingRate = static_cast<uint32_t>(Rate);
     audioQuerySettings.outputStereo = extractNativeOnnxJsonBoolField(audioQueryText, "outputStereo", audioQuerySettings.outputStereo);
     return audioQuerySettings;
 }

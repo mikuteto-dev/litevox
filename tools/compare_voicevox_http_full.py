@@ -20,9 +20,9 @@ FIXED_IMPORTED_WORD_UUID = "11111111-1111-1111-1111-111111111111"
 DEFAULT_SONG_SCORE = {
     "notes": [
         {"key": None, "frame_length": 15, "lyric": ""},
-        {"key": 60, "frame_length": 45, "lyric": "ド"},
-        {"key": 62, "frame_length": 45, "lyric": "レ"},
-        {"key": 64, "frame_length": 45, "lyric": "ミ"},
+        {"id": "frame_length", "key": 60, "frame_length": 45, "lyric": "ド"},
+        {"id": "音符-レ", "key": 62, "frame_length": 45, "lyric": "レ"},
+        {"id": "音符-ミ", "key": 64, "frame_length": 45, "lyric": "ミ"},
         {"key": None, "frame_length": 15, "lyric": ""},
     ]
 }
@@ -324,7 +324,7 @@ def make_audio_query():
 
 
 def make_frame_query():
-    body = json.dumps(DEFAULT_SONG_SCORE, ensure_ascii=False, separators=(",", ":")).encode()
+    body = json.dumps(DEFAULT_SONG_SCORE, ensure_ascii=True, separators=(",", ":")).encode()
     return body, call_both(post("/sing_frame_audio_query?speaker=6000", body, {"Content-Type": "application/json"}))
 
 

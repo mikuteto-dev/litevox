@@ -208,6 +208,21 @@ struct NativeOnnxAudioQuerySettings {
     bool outputStereo = false;
 };
 
+struct soxr;
+
+class NativeOnnxPcm {
+public:
+    explicit NativeOnnxPcm(const NativeOnnxAudioQuerySettings &Settings);
+    ~NativeOnnxPcm();
+    NativeOnnxPcm(const NativeOnnxPcm &) = delete;
+    NativeOnnxPcm &operator=(const NativeOnnxPcm &) = delete;
+    std::vector<uint8_t> Convert(const std::vector<float> &Wave, bool Final);
+private:
+    NativeOnnxAudioQuerySettings Settings;
+    // 遅延と位相をチャンク間で保持し、末尾でだけ残りの音声を排出する。
+    soxr *Resampler = nullptr;
+};
+
 struct NativeOnnxMora {
     std::string text;
     std::string consonant;
