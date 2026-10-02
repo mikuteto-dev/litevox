@@ -3,7 +3,6 @@
 #include "utility.hpp"
 
 #include <algorithm>
-#include <exception>
 #include <stdexcept>
 
 namespace fs = std::filesystem;
@@ -18,9 +17,6 @@ static std::string normalizeBackendMode(const std::string &backendMode) {
     }
     if (backendMode == "voicevox-core" || backendMode == "voicevox_core" || backendMode == "vv") {
         return "voicevox-core";
-    }
-    if (backendMode == "core-fork" || backendMode == "core_fork") {
-        return "core-fork";
     }
     if (backendMode == "minimal-ort" || backendMode == "minimal_ort") {
         return "minimal-ort";
@@ -138,29 +134,6 @@ static std::vector<uint8_t> takeWavPointer(CoreBackendState &backendState, uintp
     return wavBytes;
 }
 
-struct CoreBackendStreamContext {
-    const std::function<void(const CoreBackendPcmStreamInfo &)> *startStream = nullptr;
-    const std::function<void(const uint8_t *, size_t)> *writeChunk = nullptr;
-    CoreBackendPcmStreamInfo *streamInfo = nullptr;
-    std::exception_ptr exception;
-    bool hasStarted = false;
-};
-
-static bool writeCoreBackendPcmChunk(const uint8_t *pcmBytes, uintptr_t pcmByteCount, void *userData) {
-    CoreBackendStreamContext *streamContext = static_cast<CoreBackendStreamContext *>(userData);
-    try {
-        if (!streamContext->hasStarted) {
-            (*streamContext->startStream)(*streamContext->streamInfo);
-            streamContext->hasStarted = true;
-        }
-        (*streamContext->writeChunk)(pcmBytes, static_cast<size_t>(pcmByteCount));
-        return true;
-    } catch (...) {
-        streamContext->exception = std::current_exception();
-        return false;
-    }
-}
-
 CoreBackendState createCoreBackendState(const CoreBackendPaths &backendPaths) {
     std::string normalizedBackendMode = normalizeBackendMode(backendPaths.backendMode);
     std::string normalizedCoreProfile = normalizeCoreProfile(backendPaths.coreProfile);
@@ -176,7 +149,7 @@ CoreBackendState createCoreBackendState(const CoreBackendPaths &backendPaths) {
         backendState.userDictPath = backendPaths.userDictPath;
         backendState.nativeOnnxRuntime = createNativeOnnxRuntimeState(backendPaths.onnxruntimeLibraryPath, normalizedAccelerationMode);
         backendState.accelerationMode = normalizedAccelerationMode;
-        backendState.nativeModelMode = resolveNativeModelMode(backendPaths, normalizedBackendMode, normalizedAccelerationMode, normalizedNativeModelMode);
+        backendState.nativeModelMode = resolveNativeModelMode(backendPaths, normalizedBackendMode, backendState.nativeOnnxRuntime.isGpuExecutionProviderSelected ? "gpu" : normalizedAccelerationMode, normalizedNativeModelMode);
         return backendState;
     }
     ensurePathExists(backendPaths.coreLibraryPath, "core library");
@@ -298,8 +271,8 @@ CoreBackendCapabilities getCoreBackendCapabilities(const CoreBackendState &backe
     backendCapabilities.supportsFrameSynthesis = backendState.coreApi.hasFrameSynthesis;
     backendCapabilities.supportsAudioQueryValidation = backendState.coreApi.hasAudioQueryValidate;
     backendCapabilities.supportsFrameAudioQueryValidation = backendState.coreApi.hasFrameAudioQueryValidate;
-    backendCapabilities.supportsTrueStreaming = backendState.coreApi.hasLitevoxCoreForkSynthesisStreamPcm;
-    backendCapabilities.supportsVvmAssetLoader = backendState.coreApi.hasLitevoxCoreForkLoadVoiceModelFromAssets;
+    backendCapabilities.supportsTrueStreaming = false;
+    backendCapabilities.supportsVvmAssetLoader = false;
     if (getCoreBackendProfile(backendState) == "talk-only") {
         backendCapabilities.supportsCancellation = false;
         backendCapabilities.supportsNativeMorphing = false;
@@ -353,17 +326,6 @@ std::array<uint8_t, 16> loadCoreBackendVoiceModel(CoreBackendState &backendState
         backendState.coreApi.voiceModelFileDelete(modelFile);
         throw;
     }
-}
-
-std::array<uint8_t, 16> loadCoreBackendVoiceModelFromAssets(CoreBackendState &backendState, const fs::path &modelPath, const std::string &assetTableJson) {
-    ensureImplementedBackendOperation(backendState, "asset model loader");
-    if (getCoreBackendMode(backendState) == "core-fork" && backendState.coreApi.litevoxCoreForkLoadVoiceModelFromAssets) {
-        uint8_t modelIdBytes[16] = {};
-        std::string modelPathText = modelPath.string();
-        ensureCoreCall(backendState.coreApi, backendState.coreApi.litevoxCoreForkLoadVoiceModelFromAssets(backendState.synthesizer, modelPathText.c_str(), assetTableJson.c_str(), &modelIdBytes), "Core fork asset model loader");
-        return copyModelIdBytes(modelIdBytes);
-    }
-    return loadCoreBackendVoiceModel(backendState, modelPath);
 }
 
 void unloadCoreBackendVoiceModel(CoreBackendState &backendState, const std::array<uint8_t, 16> &modelId) {
@@ -482,26 +444,6 @@ std::vector<uint8_t> synthesizeCoreBackendKana(CoreBackendState &backendState, c
     VoicevoxTtsOptions ttsOptions = backendState.coreApi.makeDefaultTtsOptions();
     ensureCoreCall(backendState.coreApi, backendState.coreApi.synthesizerTtsFromKana(backendState.synthesizer, kana.c_str(), styleId, ttsOptions, &wavLength, &wavPointer), "tts_from_kana");
     return takeWavPointer(backendState, wavLength, wavPointer);
-}
-
-void streamCoreBackendAudioQuery(CoreBackendState &backendState, const std::string &audioQueryJson, uint32_t styleId, size_t chunkFrames, const std::function<void(const CoreBackendPcmStreamInfo &)> &startStream, const std::function<void(const uint8_t *, size_t)> &writeChunk) {
-    ensureImplementedBackendOperation(backendState, "true streaming synthesis");
-    if (!backendState.coreApi.litevoxCoreForkSynthesisStreamPcm) {
-        throw std::runtime_error("true streaming は現在の backend では未対応です");
-    }
-    VoicevoxSynthesisOptions synthesisOptions = backendState.coreApi.makeDefaultSynthesisOptions();
-    CoreBackendPcmStreamInfo streamInfo;
-    CoreBackendStreamContext streamContext;
-    streamContext.startStream = &startStream;
-    streamContext.writeChunk = &writeChunk;
-    streamContext.streamInfo = &streamInfo;
-    ensureCoreCall(backendState.coreApi, backendState.coreApi.litevoxCoreForkSynthesisStreamPcm(backendState.synthesizer, audioQueryJson.c_str(), styleId, synthesisOptions, static_cast<uintptr_t>(std::max<size_t>(1, chunkFrames)), &streamInfo.sampleRate, &streamInfo.channels, &streamInfo.bitsPerSample, &streamInfo.pcmBytes, writeCoreBackendPcmChunk, &streamContext), "true streaming synthesis");
-    if (!streamContext.hasStarted) {
-        startStream(streamInfo);
-    }
-    if (streamContext.exception) {
-        std::rethrow_exception(streamContext.exception);
-    }
 }
 
 std::string createCoreBackendSingFrameAudioQuery(CoreBackendState &backendState, const std::string &scoreJson, uint32_t styleId) {

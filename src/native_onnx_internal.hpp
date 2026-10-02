@@ -83,10 +83,26 @@ inline constexpr size_t ortApiIndexReleaseSessionOptions = 100;
 inline constexpr size_t ortApiIndexGetAvailableProviders = 125;
 inline constexpr size_t ortApiIndexReleaseAvailableProviders = 126;
 inline constexpr size_t ortApiIndexAddSessionConfigEntry = 130;
-inline constexpr size_t ortApiIndexSessionOptionsAppendExecutionProvider = 192;
+inline constexpr size_t ortApiIndexSessionOptionsAppendExecutionProvider = 216;
+inline constexpr size_t ExecutionModeIndex = 13;
+inline constexpr size_t PatternIndex = 17;
+inline constexpr size_t ProviderApiIndex = 195;
+inline constexpr size_t CudaIndex = 204;
+inline constexpr size_t CudaCreateIndex = 205;
+inline constexpr size_t CudaReleaseIndex = 208;
 inline constexpr size_t ortApiIndexGetTrainingApi = 219;
 inline constexpr size_t ortTrainingApiIndexSetSeed = 22;
-inline constexpr uint32_t nativeOnnxCoreMlFlags = 0x008;
+// MLProgram は動的な発話長を扱う。静的形状限定 (0x008) では主要な音声ノードが CPU に残る。
+inline constexpr uint32_t nativeOnnxCoreMlFlags = 0x010;
+inline constexpr int32_t OptimizationAll = 99;
+
+struct OrtCUDAProviderOptionsV2;
+using CreateCudaOptions = OrtStatus *(*)(OrtCUDAProviderOptionsV2 **);
+using ReleaseCudaOptions = void (*)(OrtCUDAProviderOptionsV2 *);
+using AppendCuda = OrtStatus *(*)(OrtSessionOptions *, const OrtCUDAProviderOptionsV2 *);
+using GetProviderApi = OrtStatus *(*)(const char *, uint32_t, const void **);
+using ConfigureSession = OrtStatus *(*)(OrtSessionOptions *);
+using SetExecutionMode = OrtStatus *(*)(OrtSessionOptions *, int32_t);
 
 using OrtGetApiBaseFunction = const OrtApiBase *(*)();
 using OrtGetErrorMessageFunction = const char *(*)(const OrtStatus *);
@@ -152,6 +168,12 @@ struct NativeOnnxApi {
     OrtAddSessionConfigEntryFunction addSessionConfigEntry = nullptr;
     OrtSessionOptionsAppendExecutionProviderFunction appendExecutionProvider = nullptr;
     OrtSessionOptionsAppendExecutionProviderCoreMLFunction appendExecutionProviderCoreML = nullptr;
+    CreateCudaOptions CreateCuda = nullptr;
+    ReleaseCudaOptions ReleaseCuda = nullptr;
+    AppendCuda Cuda = nullptr;
+    GetProviderApi ProviderApi = nullptr;
+    ConfigureSession DisablePattern = nullptr;
+    SetExecutionMode ExecutionMode = nullptr;
     OrtSessionGetCountFunction sessionGetInputCount = nullptr;
     OrtSessionGetCountFunction sessionGetOutputCount = nullptr;
     OrtSessionGetNameFunction sessionGetInputName = nullptr;
@@ -296,6 +318,9 @@ enum class NativeOnnxSingTeacherMode {
 };
 
 struct NativeOnnxCachedSession {
+    // DirectML は同一セッションでの並列 Run を許可しない。
+    std::mutex RunMutex;
+    bool IsSerial = false;
     void *libraryHandle = nullptr;
     OrtEnv *env = nullptr;
     OrtSession *session = nullptr;
@@ -372,6 +397,9 @@ void ensureNativeOnnxCall(NativeOnnxApi &nativeOnnxApi, OrtStatus *callStatus, c
 std::vector<std::string> collectNativeOnnxAvailableProviders(NativeOnnxApi &nativeOnnxApi);
 void applyNativeOnnxSeedIfConfigured(NativeOnnxApi &nativeOnnxApi);
 void configureNativeOnnxSessionOptions(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, OrtSessionOptions *sessionOptions, uint16_t cpuThreadCount, bool shouldUseVvBinConfig);
+std::string SelectProvider(NativeOnnxApi &Api, const std::string &Mode, const std::vector<std::string> &Providers, bool &IsUsable);
+bool IsCoremlProfile();
+const NativeOnnxRuntimeState *SelectModel(const NativeOnnxRuntimeState *State, const ModelAssetRecord &Asset, NativeOnnxRuntimeState &Cpu);
 const NativeOnnxTraceInput *findNativeOnnxTraceTensor(const std::vector<NativeOnnxTraceInput> &traceTensors, const std::string &tensorName);
 const NativeOnnxTraceInput &requireNativeOnnxTensor(const std::vector<NativeOnnxTraceInput> &traceTensors, const std::string &tensorName);
 

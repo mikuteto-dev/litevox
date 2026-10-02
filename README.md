@@ -74,20 +74,33 @@ dist/litevox models \
   --runtime /path/to/voicevox-<platform>.zip
 ```
 
+## 性能測定
+
+[Apple M2での本家との比較・測定条件](benchmarks/M2.md)と[再送できる入力付き生データ](benchmarks/M2.json)を公開しています。CPU各1スレッド・同じ入力の暖機後5回では、Metal/WebGPU版は読み上げ約5.4倍、歌唱約4.2倍速く、同じORTを使うCPU版同士はほぼ同等でした。CPU4スレッドにすると本家も大幅に速くなるため、倍率を全設定へ一般化しません。共有ホストでの測定の限界、CoreMLの作成失敗、Windows/Linux実機未検証も記録しています。
+
 ## GPU を使う場合
 
-- mac 版 VOICEVOX 製品 zip 同梱 ORT は CPU provider のみです
-- Windows DirectML 版 VOICEVOX 製品 zip 同梱 ORT は Windows 上で GPU を使えます
-- mac で GPU を使う場合は、GPU provider を含む標準 ORT を別途指定します
+- mac 版 VOICEVOX 製品 zip 同梱 ORT は CPU 専用です。Apple GPU がないわけではありません。
+- native backend は CUDA（Windows/Linux）、DirectML（Windows）、CoreML（macOS）、WebGPU（Metal / D3D12 / Vulkan）を選択できます。対応 provider を含む ORT とドライバーが必要です。
+- CoreML は動的な発話長に対応する MLProgram と `MLComputeUnits=ALL` を使い、CPU / GPU / Neural Engine の振り分けを CoreML に任せます。全ノードが GPU で動くという意味ではありません。
+- DirectML は高性能 GPU を選択し、必須の sequential mode / memory pattern 無効化と同一セッションの Run 排他制御を適用します。
+- 実測で転送コストが不利だった音長・音高・歌唱教師は CPU、読み上げ・歌唱の波形デコーダは選択した GPU に配置します。GPU のモデル作成・実行失敗を別の CPU ライブラリで黙って成功扱いにはしません。
+- CPU 推論にも ORT の全グラフ最適化を適用します。移植用 ONNX の書き出しは BASIC に留め、CPU 専用の最適化を焼き込みません。
+- 標準 ORT を別のディレクトリから指定する場合、独自 vv_bin の変換用に元の `libvoicevox_onnxruntime` も指定します。
 
 ```sh
+LITEVOX_VV_BIN_ONNXRUNTIME=/path/to/runtime-root/libvoicevox_onnxruntime.dylib \
 dist/litevox runtime_info \
-  --runtime /path/to/voicevox-macos-cpu-arm64-0.25.2.zip \
-  --onnxruntime /path/to/<onnxruntime-library> \
+  --runtime /path/to/runtime-root \
+  --onnxruntime /path/to/onnxruntime/lib/libonnxruntime.dylib \
   --acceleration-mode gpu
 ```
 
-`--acceleration-mode auto` でも、指定した ORT に GPU provider があれば自動でそちらを使います。
+`auto` は利用可能な CUDA → DirectML → WebGPU → CoreML を優先し、設定できなければ CPU を選びます。VOICEVOX 0.25.2 の一部の動的グラフは CoreML で中間形状を解決できないため、macOS でも実測・生成確認済みの Metal/WebGPU を優先します。`gpu` は設定できなければエラーです。`LITEVOX_EXECUTION_PROVIDER=CoreMLExecutionProvider` / `WebGpuExecutionProvider` などで比較対象を固定できます。未搭載の provider や `cpu` / `gpu` と矛盾する指定は拒否します。
+
+provider の登録と実際の GPU 実行は別です。macOS 14.4 以降の対応 ORT では `LITEVOX_COREML_PROFILE=1` を指定し、実モデル生成時の CoreML compute plan（各演算の CPU / GPU / Neural Engine 割り当て）を標準エラーへ出力できます。速度比較時は外してください。
+
+同条件の読み上げ・歌唱 HTTP 比較には `python3 tools/Benchmark.py --engine official=http://127.0.0.1:50121 --engine litevox=http://127.0.0.1:50122 --score score.json --runs 10 --out result.json` を使います。本家が生成した同じクエリを双方に渡し、初回とウォームアップを除いた時間・RTF・WAV 形状を保存します。CPU スレッド数・モデル・サンプルレートを揃え、他の重い処理と同時に測定しないでください。
 
 ## runtime root を明示的に作る
 

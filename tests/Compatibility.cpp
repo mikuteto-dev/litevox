@@ -67,5 +67,53 @@ int main() {
             assert(Whole[Position] == Whole[Position + 2] && Whole[Position + 1] == Whole[Position + 3]);
         }
     }
-    std::cout << "JSON / song / resampling compatibility checks passed\n";
+    NativeOnnxApi Api;
+    Api.createEnv = [](int32_t, const char *, OrtEnv **Env) -> OrtStatus * { *Env = nullptr; return nullptr; };
+    Api.releaseEnv = [](OrtEnv *) {};
+    Api.createSessionOptions = [](OrtSessionOptions **Options) -> OrtStatus * { *Options = nullptr; return nullptr; };
+    Api.releaseSessionOptions = [](OrtSessionOptions *) {};
+    Api.CreateCuda = [](OrtCUDAProviderOptionsV2 **Options) -> OrtStatus * {
+        *Options = reinterpret_cast<OrtCUDAProviderOptionsV2 *>(1); return nullptr;
+    };
+    static bool IsReleased = false;
+    Api.ReleaseCuda = [](OrtCUDAProviderOptionsV2 *) { IsReleased = true; };
+    Api.Cuda = [](OrtSessionOptions *, const OrtCUDAProviderOptionsV2 *Options) -> OrtStatus * {
+        assert(Options); return nullptr;
+    };
+    bool IsUsable = false;
+    const std::vector<std::string> Providers{"CPUExecutionProvider", "CUDAExecutionProvider"};
+    assert(SelectProvider(Api, "auto", Providers, IsUsable) == "CUDAExecutionProvider");
+    assert(IsUsable && IsReleased);
+    assert(SelectProvider(Api, "cpu", Providers, IsUsable) == "CPUExecutionProvider");
+    assert(SelectProvider(Api, "auto", {"CPUExecutionProvider"}, IsUsable) == "CPUExecutionProvider" && !IsUsable);
+    bool IsRejected = false;
+    try { SelectProvider(Api, "gpu", {"CPUExecutionProvider"}, IsUsable); }
+    catch (const std::runtime_error &) { IsRejected = true; }
+    assert(IsRejected);
+    Api.appendExecutionProvider = [](OrtSessionOptions *, const char *Name, const char *const *Keys, const char *const *Values, size_t Count) -> OrtStatus * {
+        if (std::string(Name) == "WebGPU") {
+            assert(Count == 1 && std::string(Keys[0]) == "powerPreference" && std::string(Values[0]) == "high-performance");
+        } else {
+            assert(std::string(Name) == "CoreML" && Count >= 2);
+            assert(std::string(Keys[0]) == "ModelFormat" && std::string(Values[0]) == "MLProgram");
+            assert(std::string(Keys[1]) == "MLComputeUnits" && std::string(Values[1]) == "ALL");
+        }
+        return nullptr;
+    };
+    assert(SelectProvider(Api, "gpu", {"CoreMLExecutionProvider"}, IsUsable) == "CoreMLExecutionProvider" && IsUsable);
+    assert(SelectProvider(Api, "auto", {"CoreMLExecutionProvider", "WebGpuExecutionProvider"}, IsUsable) == "WebGpuExecutionProvider" && IsUsable);
+    Reject([&] { SelectProvider(Api, "invalid", Providers, IsUsable); });
+    NativeOnnxRuntimeState Gpu, Cpu;
+    Gpu.selectedExecutionProvider = "WebGpuExecutionProvider";
+    Gpu.isGpuExecutionProviderSelected = true;
+    ModelAssetRecord Asset;
+    Asset.entryName = "models/pi.bin";
+    assert(SelectModel(&Gpu, Asset, Cpu)->selectedExecutionProvider == "CPUExecutionProvider");
+    assert(!Cpu.isGpuExecutionProviderSelected && Gpu.isGpuExecutionProviderSelected);
+    for (const char *Name : {"models/d.bin", "models/sd.bin"}) {
+        Asset.entryName = Name;
+        assert(SelectModel(&Gpu, Asset, Cpu) == &Gpu);
+    }
+    assert(SelectModel(nullptr, Asset, Cpu) == nullptr);
+    std::cout << "JSON / song / resampling / GPU selection compatibility checks passed\n";
 }

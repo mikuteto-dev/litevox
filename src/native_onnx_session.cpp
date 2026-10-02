@@ -264,6 +264,7 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
     OrtSessionOptions *sessionOptions = nullptr;
     OrtAllocator *allocator = nullptr;
     try {
+        cachedSession->IsSerial = runtimeState && runtimeState->selectedExecutionProvider == "DmlExecutionProvider";
         cachedSession->releaseEnv = nativeOnnxApi.releaseEnv;
         cachedSession->releaseMemoryInfo = nativeOnnxApi.releaseMemoryInfo;
         cachedSession->releaseSession = nativeOnnxApi.releaseSession;
@@ -271,7 +272,7 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
         if (!cachedSession->libraryHandle) {
             throw std::runtime_error(std::string("ONNX Runtime を保持できません: ") + getDynamicLibraryErrorText());
         }
-        ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createEnv(ortLoggingLevelWarning, "litevox-native-cache", &cachedSession->env), "OrtEnv 作成");
+        ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createEnv(IsCoremlProfile() ? 0 : ortLoggingLevelWarning, "litevox-native-cache", &cachedSession->env), "OrtEnv 作成");
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.getAllocatorWithDefaultOptions(&allocator), "default allocator 取得");
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createSessionOptions(&sessionOptions), "SessionOptions 作成");
         configureNativeOnnxSessionOptions(nativeOnnxApi, runtimeState, sessionOptions, cpuThreadCount, shouldUseVvBinConfig);
@@ -305,6 +306,7 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
     OrtSessionOptions *sessionOptions = nullptr;
     OrtAllocator *allocator = nullptr;
     try {
+        cachedSession->IsSerial = runtimeState && runtimeState->selectedExecutionProvider == "DmlExecutionProvider";
         cachedSession->releaseEnv = nativeOnnxApi.releaseEnv;
         cachedSession->releaseMemoryInfo = nativeOnnxApi.releaseMemoryInfo;
         cachedSession->releaseSession = nativeOnnxApi.releaseSession;
@@ -312,7 +314,7 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
         if (!cachedSession->libraryHandle) {
             throw std::runtime_error(std::string("ONNX Runtime を保持できません: ") + getDynamicLibraryErrorText());
         }
-        ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createEnv(ortLoggingLevelWarning, "litevox-native-cache", &cachedSession->env), "OrtEnv 作成");
+        ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createEnv(IsCoremlProfile() ? 0 : ortLoggingLevelWarning, "litevox-native-cache", &cachedSession->env), "OrtEnv 作成");
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.getAllocatorWithDefaultOptions(&allocator), "default allocator 取得");
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createSessionOptions(&sessionOptions), "SessionOptions 作成");
         configureNativeOnnxSessionOptions(nativeOnnxApi, runtimeState, sessionOptions, cpuThreadCount, shouldUseVvBinConfig);
@@ -404,6 +406,8 @@ std::shared_ptr<NativeOnnxCachedSession> getNativeOnnxCachedSession(NativeOnnxAp
 }
 
 std::vector<NativeOnnxTraceInput> runNativeOnnxPreparedSession(NativeOnnxApi &nativeOnnxApi, const std::shared_ptr<NativeOnnxCachedSession> &cachedSession, const std::vector<NativeOnnxTraceInput> &inputTensors) {
+    std::unique_lock<std::mutex> Lock(cachedSession->RunMutex, std::defer_lock);
+    if (cachedSession->IsSerial) Lock.lock();
     std::vector<OrtValue *> inputValues;
     std::vector<OrtValue *> outputValues(cachedSession->outputDescriptors.size(), nullptr);
     try {

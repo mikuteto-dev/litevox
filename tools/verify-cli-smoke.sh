@@ -18,7 +18,14 @@ cleanup() {
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
-  rm -rf "$tmp_dir"
+  python3 - "$tmp_dir" <<'PY'
+import sys
+from pathlib import Path
+Target = Path(sys.argv[1]).resolve()
+if Target.parent != Path('/tmp').resolve() or not Target.name.startswith('litevox-cli-smoke.'):
+    raise ValueError(f'unsafe smoke cleanup target: {Target}')
+PY
+  rm -rf -- "${tmp_dir:?}"
 }
 
 trap cleanup EXIT INT TERM

@@ -2,7 +2,7 @@
 build/
 dist/
 audio-compare/
-core-fork/voicevox_core/target/
 .litevox-runtime-cache/
 .litevox-exported-onnx-cache/
 .litevox-model-vvm/
+__pycache__/

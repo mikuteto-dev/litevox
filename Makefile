@@ -14,9 +14,6 @@ DIST_TARGET ?= $(DIST_DIR)/litevox
 BUNDLE_DIR ?= $(DIST_DIR)/bootstrap-bundle
 BUNDLE_ARCHIVE ?= $(DIST_DIR)/bootstrap-bundle.tar.gz
 BUNDLE_ARCHIVE_SHA256 ?= $(BUNDLE_ARCHIVE).sha256
-CORE_FORK_DIR ?= core-fork/voicevox_core
-CORE_FORK_PROFILE ?= talk-only
-CORE_FORK_LIB ?= $(CORE_FORK_DIR)/target/c-api/libvoicevox_core.dylib
 OPEN_JTALK_DIR ?= $(BUILD_DIR)/openjtalk
 OPEN_JTALK_INCLUDE_DIR ?= $(OPEN_JTALK_DIR)/include
 OPEN_JTALK_LIB ?= $(OPEN_JTALK_DIR)/lib/libopenjtalk.a
@@ -109,22 +106,7 @@ bootstrap-bundle-archive: bootstrap-bundle
 	tar -C $(dir $(BUNDLE_DIR)) -czf $(BUNDLE_ARCHIVE) $(notdir $(BUNDLE_DIR))
 	shasum -a 256 $(BUNDLE_ARCHIVE) | awk '{print $$1 "  $(notdir $(BUNDLE_ARCHIVE))"}' > $(BUNDLE_ARCHIVE_SHA256)
 
-core-fork-check:
-	test -d $(CORE_FORK_DIR)
-	printf 'core_fork_dir\t%s\n' '$(CORE_FORK_DIR)'
-	printf 'core_fork_profile\t%s\n' '$(CORE_FORK_PROFILE)'
-
-core-fork-build: core-fork-check
-	cd $(CORE_FORK_DIR) && SDKROOT='$(SDKROOT)' CFLAGS='-isysroot $(SDKROOT)' CXXFLAGS='-isysroot $(SDKROOT) -isystem $(SDKROOT)/usr/include/c++/v1' cargo build -p voicevox_core_c_api --profile c-api --features load-onnxruntime,litevox-talk-only,litevox-vvm-asset-loader
-
-core-fork-dist: core-fork-build
-	mkdir -p $(DIST_DIR)
-	cp $(CORE_FORK_LIB) $(DIST_DIR)/libvoicevox_core_fork.dylib
-ifeq ($(UNAME_S),Darwin)
-	codesign --force --sign - $(DIST_DIR)/libvoicevox_core_fork.dylib
-endif
-
-.PHONY: all check clean dist verify-runtime-from-archives verify-cli-smoke verify-bootstrap-bundle bootstrap-bundle bootstrap-bundle-archive core-fork-check core-fork-build core-fork-dist force-dep-rebuild
+.PHONY: all check clean dist verify-runtime-from-archives verify-cli-smoke verify-bootstrap-bundle bootstrap-bundle bootstrap-bundle-archive force-dep-rebuild
 
 -include $(DEP)
 

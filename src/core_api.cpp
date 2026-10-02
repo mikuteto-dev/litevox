@@ -85,10 +85,6 @@ CoreApi loadCoreApi(const std::filesystem::path &coreLibraryPath) {
     coreApi.frameAudioQueryValidate = loadOptionalSymbol<VoicevoxResultCode (*)(const char *)>(coreApi.libraryHandle, "voicevox_frame_audio_query_validate");
     coreApi.hasAudioQueryValidate = coreApi.audioQueryValidate != nullptr;
     coreApi.hasFrameAudioQueryValidate = coreApi.frameAudioQueryValidate != nullptr;
-    coreApi.litevoxCoreForkLoadVoiceModelFromAssets = loadOptionalSymbol<VoicevoxResultCode (*)(const VoicevoxSynthesizer *, const char *, const char *, uint8_t (*)[16])>(coreApi.libraryHandle, "litevox_core_fork_load_voice_model_from_assets");
-    coreApi.hasLitevoxCoreForkLoadVoiceModelFromAssets = coreApi.litevoxCoreForkLoadVoiceModelFromAssets != nullptr;
-    coreApi.litevoxCoreForkSynthesisStreamPcm = loadOptionalSymbol<VoicevoxResultCode (*)(const VoicevoxSynthesizer *, const char *, uint32_t, VoicevoxSynthesisOptions, uintptr_t, uint32_t *, uint16_t *, uint16_t *, uintptr_t *, LitevoxCoreForkPcmChunkCallback, void *)>(coreApi.libraryHandle, "litevox_core_fork_synthesis_stream_pcm");
-    coreApi.hasLitevoxCoreForkSynthesisStreamPcm = coreApi.litevoxCoreForkSynthesisStreamPcm != nullptr;
     coreApi.voiceModelFileOpen = loadSymbol<VoicevoxResultCode (*)(const char *, VoicevoxVoiceModelFile **)>(coreApi.libraryHandle, "voicevox_voice_model_file_open");
     coreApi.voiceModelFileId = loadSymbol<void (*)(const VoicevoxVoiceModelFile *, uint8_t (*)[16])>(coreApi.libraryHandle, "voicevox_voice_model_file_id");
     coreApi.voiceModelFileDelete = loadSymbol<void (*)(VoicevoxVoiceModelFile *)>(coreApi.libraryHandle, "voicevox_voice_model_file_delete");

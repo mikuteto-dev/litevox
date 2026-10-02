@@ -6,7 +6,6 @@ using VoicevoxResultCode = int32_t;
 using VoicevoxAccelerationMode = int32_t;
 using VoicevoxUserDictWordType = int32_t;
 using VoicevoxOnExistingVoiceModelId = int32_t;
-using LitevoxCoreForkPcmChunkCallback = bool (*)(const uint8_t *, uintptr_t, void *);
 
 struct VoicevoxLoadOnnxruntimeOptions {
     const char *filename;
@@ -53,8 +52,6 @@ struct CoreApi {
     bool hasFrameSynthesis = false;
     bool hasAudioQueryValidate = false;
     bool hasFrameAudioQueryValidate = false;
-    bool hasLitevoxCoreForkLoadVoiceModelFromAssets = false;
-    bool hasLitevoxCoreForkSynthesisStreamPcm = false;
     const char *(*getVersion)() = nullptr;
     VoicevoxLoadOnnxruntimeOptions (*makeDefaultLoadOnnxruntimeOptions)() = nullptr;
     VoicevoxInitializeOptions (*makeDefaultInitializeOptions)() = nullptr;
@@ -91,8 +88,6 @@ struct CoreApi {
     VoicevoxResultCode (*audioQueryCreateFromAccentPhrases)(const char *, char **) = nullptr;
     VoicevoxResultCode (*audioQueryValidate)(const char *) = nullptr;
     VoicevoxResultCode (*frameAudioQueryValidate)(const char *) = nullptr;
-    VoicevoxResultCode (*litevoxCoreForkLoadVoiceModelFromAssets)(const VoicevoxSynthesizer *, const char *, const char *, uint8_t (*)[16]) = nullptr;
-    VoicevoxResultCode (*litevoxCoreForkSynthesisStreamPcm)(const VoicevoxSynthesizer *, const char *, uint32_t, VoicevoxSynthesisOptions, uintptr_t, uint32_t *, uint16_t *, uint16_t *, uintptr_t *, LitevoxCoreForkPcmChunkCallback, void *) = nullptr;
     VoicevoxResultCode (*voiceModelFileOpen)(const char *, VoicevoxVoiceModelFile **) = nullptr;
     void (*voiceModelFileId)(const VoicevoxVoiceModelFile *, uint8_t (*)[16]) = nullptr;
     void (*voiceModelFileDelete)(VoicevoxVoiceModelFile *) = nullptr;

@@ -109,15 +109,10 @@ static AudioStreamPayload synthesizeSegmentedTextPcmPayload(RuntimeState &runtim
     return createAudioStreamPayload(synthesizeText(runtimeState, segmentText, styleId), AudioStreamFormat::Pcm);
 }
 
-static void streamCoreBackendPcmAudio(RuntimeState &runtimeState, const std::string &audioQueryJson, uint32_t styleId, const RuntimeAudioStreamOptions &streamOptions, bool shouldUseStreamingWaveHeader, bool &hasWrittenWaveHeader, const std::function<void(const uint8_t *, size_t)> &writeChunk);
 static void streamNativeBackendPcmAudio(RuntimeState &runtimeState, const std::string &audioQueryJson, uint32_t styleId, const RuntimeAudioStreamOptions &streamOptions, bool shouldUseStreamingWaveHeader, bool &hasWrittenWaveHeader, const std::function<void(const uint8_t *, size_t)> &writeChunk);
 
 static void streamSegmentedAudioQuery(RuntimeState &runtimeState, const std::string &audioQueryJson, uint32_t styleId, const RuntimeAudioStreamOptions &streamOptions, bool &hasWrittenWaveHeader, const std::function<void(const uint8_t *, size_t)> &writeChunk) {
-    if (isNativeRuntimeBackend(runtimeState)) {
-        streamNativeBackendPcmAudio(runtimeState, audioQueryJson, styleId, streamOptions, true, hasWrittenWaveHeader, writeChunk);
-        return;
-    }
-    streamCoreBackendPcmAudio(runtimeState, audioQueryJson, styleId, streamOptions, true, hasWrittenWaveHeader, writeChunk);
+    streamNativeBackendPcmAudio(runtimeState, audioQueryJson, styleId, streamOptions, true, hasWrittenWaveHeader, writeChunk);
 }
 
 struct SegmentedTextPrefetchState {
@@ -290,27 +285,6 @@ static size_t convertChunkSamplesToDecoderFrames(size_t chunkSamples) {
     return std::max<size_t>(1, (std::max<size_t>(1, chunkSamples) + 255) / 256);
 }
 
-static void streamCoreBackendPcmAudio(RuntimeState &runtimeState, const std::string &audioQueryJson, uint32_t styleId, const RuntimeAudioStreamOptions &streamOptions, bool shouldUseStreamingWaveHeader, bool &hasWrittenWaveHeader, const std::function<void(const uint8_t *, size_t)> &writeChunk) {
-    size_t chunkFrames = convertChunkSamplesToDecoderFrames(streamOptions.chunkSamples);
-    auto startStream = [&streamOptions, shouldUseStreamingWaveHeader, &hasWrittenWaveHeader, &writeChunk](const CoreBackendPcmStreamInfo &streamInfo) {
-        if (streamOptions.audioStreamFormat == AudioStreamFormat::Wav) {
-            if (shouldUseStreamingWaveHeader && hasWrittenWaveHeader) {
-                return;
-            }
-            uint64_t pcmByteCount = shouldUseStreamingWaveHeader ? getStreamingWavePcmByteCount() : streamInfo.pcmBytes;
-            std::vector<uint8_t> wavHeader = createPcmWaveHeader(streamInfo.sampleRate, streamInfo.channels, streamInfo.bitsPerSample, pcmByteCount);
-            writeChunk(wavHeader.data(), wavHeader.size());
-            hasWrittenWaveHeader = true;
-        }
-    };
-    streamCoreBackendAudioQuery(runtimeState.coreBackend, audioQueryJson, styleId, chunkFrames, startStream, writeChunk);
-}
-
-static void streamCoreBackendPcmAudio(RuntimeState &runtimeState, const std::string &audioQueryJson, uint32_t styleId, const RuntimeAudioStreamOptions &streamOptions, const std::function<void(const uint8_t *, size_t)> &writeChunk) {
-    bool hasWrittenWaveHeader = false;
-    streamCoreBackendPcmAudio(runtimeState, audioQueryJson, styleId, streamOptions, false, hasWrittenWaveHeader, writeChunk);
-}
-
 static void streamNativeBackendPcmAudio(RuntimeState &runtimeState, const std::string &audioQueryJson, uint32_t styleId, const RuntimeAudioStreamOptions &streamOptions, bool shouldUseStreamingWaveHeader, bool &hasWrittenWaveHeader, const std::function<void(const uint8_t *, size_t)> &writeChunk) {
     size_t chunkFrames = convertChunkSamplesToDecoderFrames(streamOptions.chunkSamples);
     const VoiceModelRecord &modelRecord = getRuntimeVoiceModelForStyle(runtimeState, styleId);
@@ -340,8 +314,6 @@ void streamAudioQuery(RuntimeState &runtimeState, const std::string &audioQueryJ
             streamNativeBackendPcmAudio(runtimeState, audioQueryJson, styleId, streamOptions, writeChunk);
             return;
         }
-        streamCoreBackendPcmAudio(runtimeState, audioQueryJson, styleId, streamOptions, writeChunk);
-        return;
     }
     streamWavBytes(synthesizeAudioQuery(runtimeState, audioQueryJson, styleId), streamOptions, writeChunk);
 }

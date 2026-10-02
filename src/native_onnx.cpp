@@ -262,6 +262,12 @@ NativeOnnxApi loadNativeOnnxApi(const fs::path &onnxruntimeLibraryPath) {
     nativeOnnxApi.addSessionConfigEntry = loadNativeOnnxApiFunction<OrtAddSessionConfigEntryFunction>(nativeOnnxApi.api, ortApiIndexAddSessionConfigEntry);
     nativeOnnxApi.appendExecutionProvider = loadNativeOnnxApiFunction<OrtSessionOptionsAppendExecutionProviderFunction>(nativeOnnxApi.api, ortApiIndexSessionOptionsAppendExecutionProvider);
     nativeOnnxApi.appendExecutionProviderCoreML = reinterpret_cast<OrtSessionOptionsAppendExecutionProviderCoreMLFunction>(loadDynamicLibrarySymbol(nativeOnnxApi.libraryHandle, "OrtSessionOptionsAppendExecutionProvider_CoreML"));
+    nativeOnnxApi.CreateCuda = loadNativeOnnxApiFunction<CreateCudaOptions>(nativeOnnxApi.api, CudaCreateIndex);
+    nativeOnnxApi.ReleaseCuda = loadNativeOnnxApiFunction<ReleaseCudaOptions>(nativeOnnxApi.api, CudaReleaseIndex);
+    nativeOnnxApi.Cuda = loadNativeOnnxApiFunction<AppendCuda>(nativeOnnxApi.api, CudaIndex);
+    nativeOnnxApi.ProviderApi = loadNativeOnnxApiFunction<GetProviderApi>(nativeOnnxApi.api, ProviderApiIndex);
+    nativeOnnxApi.DisablePattern = loadNativeOnnxApiFunction<ConfigureSession>(nativeOnnxApi.api, PatternIndex);
+    nativeOnnxApi.ExecutionMode = loadNativeOnnxApiFunction<SetExecutionMode>(nativeOnnxApi.api, ExecutionModeIndex);
     nativeOnnxApi.sessionGetInputCount = loadNativeOnnxApiFunction<OrtSessionGetCountFunction>(nativeOnnxApi.api, ortApiIndexSessionGetInputCount);
     nativeOnnxApi.sessionGetOutputCount = loadNativeOnnxApiFunction<OrtSessionGetCountFunction>(nativeOnnxApi.api, ortApiIndexSessionGetOutputCount);
     nativeOnnxApi.sessionGetInputName = loadNativeOnnxApiFunction<OrtSessionGetNameFunction>(nativeOnnxApi.api, ortApiIndexSessionGetInputName);
@@ -328,32 +334,62 @@ static std::string consumeNativeOnnxStatusMessage(NativeOnnxApi &nativeOnnxApi, 
     return errorMessage;
 }
 
-static void appendNativeOnnxExecutionProvider(NativeOnnxApi &nativeOnnxApi, OrtSessionOptions *sessionOptions, const std::string &providerName) {
-    if (providerName.empty() || providerName == "CPUExecutionProvider") {
+bool IsCoremlProfile() {
+    const char *Value = std::getenv("LITEVOX_COREML_PROFILE");
+    if (!Value || !*Value || std::strcmp(Value, "0") == 0) return false;
+    if (std::strcmp(Value, "1") == 0) return true;
+    throw std::invalid_argument("LITEVOX_COREML_PROFILE は 0 / 1 が必要です");
+}
+
+static void appendNativeOnnxExecutionProvider(NativeOnnxApi &Api, OrtSessionOptions *Options, const std::string &Provider) {
+    if (Provider.empty() || Provider == "CPUExecutionProvider") return;
+    if (Provider == "CUDAExecutionProvider" && Api.CreateCuda && Api.Cuda && Api.ReleaseCuda) {
+        OrtCUDAProviderOptionsV2 *Raw = nullptr;
+        OrtStatus *Status = Api.CreateCuda(&Raw);
+        std::unique_ptr<OrtCUDAProviderOptionsV2, ReleaseCudaOptions> Cuda(Raw, Api.ReleaseCuda);
+        ensureNativeOnnxCall(Api, Status, "CUDA options 作成");
+        ensureNativeOnnxCall(Api, Api.Cuda(Options, Cuda.get()), "CUDA provider 設定");
         return;
     }
-    if (providerName == "CoreMLExecutionProvider") {
-        if (nativeOnnxApi.appendExecutionProviderCoreML) {
-            ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.appendExecutionProviderCoreML(sessionOptions, nativeOnnxCoreMlFlags), "CoreML provider 設定");
+    if (Provider == "DmlExecutionProvider" && Api.ProviderApi && Api.DisablePattern && Api.ExecutionMode) {
+        // DirectML は memory pattern と並列実行モードをサポートしない。
+        ensureNativeOnnxCall(Api, Api.DisablePattern(Options), "DML memory pattern 無効化");
+        ensureNativeOnnxCall(Api, Api.ExecutionMode(Options, 0), "DML sequential mode 設定");
+        const void *Dml = nullptr;
+        ensureNativeOnnxCall(Api, Api.ProviderApi("DML", ortApiVersion, &Dml), "DML API 取得");
+        if (!Dml) throw std::runtime_error("DML API がありません");
+        struct DeviceOptions { int32_t Preference; uint32_t Filter; } Device{1, 1};
+        using AppendDevice = OrtStatus *(*)(OrtSessionOptions *, DeviceOptions *);
+        auto Append = loadNativeOnnxApiFunction<AppendDevice>(Dml, 5);
+        if (!Append) throw std::runtime_error("DML high-performance API がありません");
+        ensureNativeOnnxCall(Api, Append(Options, &Device), "DML high-performance GPU 設定");
+        return;
+    }
+    if (Provider == "WebGpuExecutionProvider" && Api.appendExecutionProvider) {
+        const char *Keys[] = {"powerPreference"};
+        const char *Values[] = {"high-performance"};
+        ensureNativeOnnxCall(Api, Api.appendExecutionProvider(Options, "WebGPU", Keys, Values, 1), "WebGPU provider 設定");
+        return;
+    }
+    if (Provider == "CoreMLExecutionProvider") {
+        bool IsProfile = IsCoremlProfile();
+        if (Api.appendExecutionProvider) {
+            const char *Keys[] = {"ModelFormat", "MLComputeUnits", "ProfileComputePlan"};
+            const char *Values[] = {"MLProgram", "ALL", "1"};
+            OrtStatus *Status = Api.appendExecutionProvider(Options, "CoreML", Keys, Values, IsProfile ? 3 : 2);
+            if (!Status) return;
+            std::string Error = consumeNativeOnnxStatusMessage(Api, Status);
+            if (IsProfile || !Api.appendExecutionProviderCoreML) {
+                throw std::runtime_error("CoreML provider 設定に失敗しました: " + Error);
+            }
+        }
+        if (IsProfile) throw std::runtime_error("この ORT は CoreML compute plan を提供しません");
+        if (Api.appendExecutionProviderCoreML) {
+            ensureNativeOnnxCall(Api, Api.appendExecutionProviderCoreML(Options, nativeOnnxCoreMlFlags), "CoreML MLProgram 設定");
             return;
         }
-        if (nativeOnnxApi.appendExecutionProvider) {
-            const char *genericProviderNames[] = {"CoreML", "CoreMLExecutionProvider"};
-            std::ostringstream errorStream;
-            for (const char *genericProviderName : genericProviderNames) {
-                OrtStatus *callStatus = nativeOnnxApi.appendExecutionProvider(sessionOptions, genericProviderName, nullptr, nullptr, 0);
-                if (!callStatus) {
-                    return;
-                }
-                if (errorStream.tellp() > 0) {
-                    errorStream << " | ";
-                }
-                errorStream << genericProviderName << ":" << consumeNativeOnnxStatusMessage(nativeOnnxApi, callStatus);
-            }
-            throw std::runtime_error("CoreML provider 設定に失敗しました: " + errorStream.str());
-        }
     }
-    throw std::runtime_error("未対応の execution provider です: " + providerName);
+    throw std::runtime_error("未対応の execution provider です: " + Provider);
 }
 
 static bool tryConfigureNativeOnnxExecutionProvider(NativeOnnxApi &nativeOnnxApi, const std::string &providerName, std::string &errorMessage) {
@@ -361,57 +397,74 @@ static bool tryConfigureNativeOnnxExecutionProvider(NativeOnnxApi &nativeOnnxApi
         return true;
     }
     OrtSessionOptions *sessionOptions = nullptr;
+    OrtEnv *Env = nullptr;
     try {
+        // WebGPU の adapter 探索などは ORT の既定 logger を必要とする。
+        ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createEnv(ortLoggingLevelWarning, "litevox-provider", &Env), "provider Env 作成");
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createSessionOptions(&sessionOptions), "SessionOptions 作成");
         appendNativeOnnxExecutionProvider(nativeOnnxApi, sessionOptions, providerName);
         nativeOnnxApi.releaseSessionOptions(sessionOptions);
+        nativeOnnxApi.releaseEnv(Env);
         return true;
     } catch (const std::exception &exception) {
         if (sessionOptions) {
             nativeOnnxApi.releaseSessionOptions(sessionOptions);
         }
+        if (Env) nativeOnnxApi.releaseEnv(Env);
         errorMessage = exception.what();
         return false;
     }
 }
 
-static std::string selectNativeOnnxExecutionProvider(NativeOnnxApi &nativeOnnxApi, const std::string &requestedAccelerationMode, const std::vector<std::string> &providerNames, bool &hasUsableGpuProvider) {
-    hasUsableGpuProvider = false;
-    std::string gpuErrorMessage;
-    if (hasNativeOnnxProviderName(providerNames, "CoreMLExecutionProvider")) {
-        std::string candidateErrorMessage;
-        if (tryConfigureNativeOnnxExecutionProvider(nativeOnnxApi, "CoreMLExecutionProvider", candidateErrorMessage)) {
-            hasUsableGpuProvider = true;
-            if (requestedAccelerationMode == "auto" || requestedAccelerationMode == "gpu") {
-                return "CoreMLExecutionProvider";
-            }
-        } else if (gpuErrorMessage.empty()) {
-            gpuErrorMessage = candidateErrorMessage;
+std::string SelectProvider(NativeOnnxApi &Api, const std::string &Mode, const std::vector<std::string> &Providers, bool &IsUsable) {
+    if (Mode != "cpu" && Mode != "auto" && Mode != "gpu") throw std::invalid_argument("acceleration mode が不正です");
+    IsUsable = false;
+    std::string Error;
+    const char *Choice = std::getenv("LITEVOX_EXECUTION_PROVIDER");
+    if (Choice && *Choice) {
+        if ((Mode == "cpu" && std::string(Choice) != "CPUExecutionProvider") ||
+            (Mode == "gpu" && std::string(Choice) == "CPUExecutionProvider")) {
+            throw std::invalid_argument("LITEVOX_EXECUTION_PROVIDER と acceleration mode が矛盾しています");
         }
-    }
-    if (requestedAccelerationMode == "gpu") {
-        if (!gpuErrorMessage.empty()) {
-            throw std::runtime_error("GPU provider を有効化できません: " + gpuErrorMessage);
+        if (!hasNativeOnnxProviderName(Providers, Choice) || !tryConfigureNativeOnnxExecutionProvider(Api, Choice, Error)) {
+            throw std::runtime_error(std::string("指定した provider を使用できません: ") + Choice + ": " + Error);
         }
-        throw std::runtime_error("native backend の ONNX Runtime に利用可能な GPU provider がありません");
+        IsUsable = std::string(Choice) != "CPUExecutionProvider";
+        return Choice;
     }
+    // WebGPU は VOICEVOX の動的形状を扱える。CoreML は一部グラフの中間形状が未解決だと作成に失敗する。
+    for (const char *Provider : {"CUDAExecutionProvider", "DmlExecutionProvider", "WebGpuExecutionProvider", "CoreMLExecutionProvider"}) {
+        if (!hasNativeOnnxProviderName(Providers, Provider)) continue;
+        std::string Candidate;
+        if (tryConfigureNativeOnnxExecutionProvider(Api, Provider, Candidate)) {
+            IsUsable = true;
+            return Mode == "cpu" ? "CPUExecutionProvider" : Provider;
+        }
+        if (Error.empty()) Error = Candidate;
+    }
+    if (Mode == "gpu") throw std::runtime_error("GPU provider を有効化できません: " + (Error.empty() ? "対応プロバイダーがありません" : Error));
     return "CPUExecutionProvider";
 }
 
 NativeOnnxRuntimeState createNativeOnnxRuntimeState(const fs::path &onnxruntimeLibraryPath, const std::string &requestedAccelerationMode) {
     NativeOnnxApi nativeOnnxApi = loadNativeOnnxApi(onnxruntimeLibraryPath);
-    NativeOnnxRuntimeState runtimeState;
-    runtimeState.libraryHandle = nativeOnnxApi.libraryHandle;
-    runtimeState.libraryPath = onnxruntimeLibraryPath;
-    runtimeState.version = nativeOnnxApi.apiBase && nativeOnnxApi.apiBase->getVersionString ? nativeOnnxApi.apiBase->getVersionString() : "";
-    runtimeState.availableProviders = collectNativeOnnxAvailableProviders(nativeOnnxApi);
-    runtimeState.requestedAccelerationMode = requestedAccelerationMode.empty() ? "auto" : requestedAccelerationMode;
-    runtimeState.selectedExecutionProvider = selectNativeOnnxExecutionProvider(nativeOnnxApi, runtimeState.requestedAccelerationMode, runtimeState.availableProviders, runtimeState.hasUsableGpuProvider);
-    runtimeState.isGpuExecutionProviderSelected = runtimeState.selectedExecutionProvider != "CPUExecutionProvider";
-    runtimeState.apiVersion = ortApiVersion;
-    runtimeState.isLoaded = true;
-    nativeOnnxApi.libraryHandle = nullptr;
-    return runtimeState;
+    try {
+        NativeOnnxRuntimeState runtimeState;
+        runtimeState.libraryHandle = nativeOnnxApi.libraryHandle;
+        runtimeState.libraryPath = onnxruntimeLibraryPath;
+        runtimeState.version = nativeOnnxApi.apiBase && nativeOnnxApi.apiBase->getVersionString ? nativeOnnxApi.apiBase->getVersionString() : "";
+        runtimeState.availableProviders = collectNativeOnnxAvailableProviders(nativeOnnxApi);
+        runtimeState.requestedAccelerationMode = requestedAccelerationMode.empty() ? "auto" : requestedAccelerationMode;
+        runtimeState.selectedExecutionProvider = SelectProvider(nativeOnnxApi, runtimeState.requestedAccelerationMode, runtimeState.availableProviders, runtimeState.hasUsableGpuProvider);
+        runtimeState.isGpuExecutionProviderSelected = runtimeState.selectedExecutionProvider != "CPUExecutionProvider";
+        runtimeState.apiVersion = ortApiVersion;
+        runtimeState.isLoaded = true;
+        nativeOnnxApi.libraryHandle = nullptr;
+        return runtimeState;
+    } catch (...) {
+        closeNativeOnnxApi(nativeOnnxApi);
+        throw;
+    }
 }
 
 void destroyNativeOnnxRuntimeState(NativeOnnxRuntimeState &runtimeState) {
@@ -465,7 +518,7 @@ void applyNativeOnnxSeedIfConfigured(NativeOnnxApi &nativeOnnxApi) {
 }
 
 void configureNativeOnnxSessionOptions(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, OrtSessionOptions *sessionOptions, uint16_t cpuThreadCount, bool shouldUseVvBinConfig) {
-    ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.setSessionGraphOptimizationLevel(sessionOptions, ortGraphOptimizationLevelBasic), "graph optimization 設定");
+    ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.setSessionGraphOptimizationLevel(sessionOptions, runtimeState ? OptimizationAll : ortGraphOptimizationLevelBasic), "graph optimization 設定");
     if (cpuThreadCount > 0) {
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.setIntraOpNumThreads(sessionOptions, cpuThreadCount), "intra op thread 設定");
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.setInterOpNumThreads(sessionOptions, cpuThreadCount), "inter op thread 設定");
@@ -488,7 +541,8 @@ bool hasNativeOnnxGpuProvider(const NativeOnnxRuntimeState &runtimeState) {
         || hasNativeOnnxProviderName(runtimeState, "CoreMLExecutionProvider")
         || hasNativeOnnxProviderName(runtimeState, "ROCMExecutionProvider")
         || hasNativeOnnxProviderName(runtimeState, "TensorrtExecutionProvider")
-        || hasNativeOnnxProviderName(runtimeState, "MIGraphXExecutionProvider");
+        || hasNativeOnnxProviderName(runtimeState, "MIGraphXExecutionProvider")
+        || hasNativeOnnxProviderName(runtimeState, "WebGpuExecutionProvider");
 }
 
 std::string createNativeOnnxSupportedDevicesJson(const NativeOnnxRuntimeState &runtimeState) {

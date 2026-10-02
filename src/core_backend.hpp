@@ -38,13 +38,6 @@ struct CoreBackendState {
 };
 
 
-struct CoreBackendPcmStreamInfo {
-    uint32_t sampleRate = 24000;
-    uint16_t channels = 1;
-    uint16_t bitsPerSample = 16;
-    uintptr_t pcmBytes = 0;
-};
-
 struct CoreBackendCapabilities {
     bool supportsCancellation = false;
     bool supportsNativeMorphing = false;
@@ -77,7 +70,6 @@ bool canCoreBackendFrameSynthesis(const CoreBackendState &backendState);
 bool canCoreBackendValidateAudioQuery(const CoreBackendState &backendState);
 bool canCoreBackendValidateFrameAudioQuery(const CoreBackendState &backendState);
 std::array<uint8_t, 16> loadCoreBackendVoiceModel(CoreBackendState &backendState, const std::filesystem::path &modelPath);
-std::array<uint8_t, 16> loadCoreBackendVoiceModelFromAssets(CoreBackendState &backendState, const std::filesystem::path &modelPath, const std::string &assetTableJson);
 void unloadCoreBackendVoiceModel(CoreBackendState &backendState, const std::array<uint8_t, 16> &modelId);
 bool isCoreBackendVoiceModelLoaded(CoreBackendState &backendState, const std::array<uint8_t, 16> &modelId);
 std::string analyzeCoreBackendText(CoreBackendState &backendState, const std::string &text);
@@ -94,7 +86,6 @@ std::string replaceCoreBackendMoraPitch(CoreBackendState &backendState, const st
 std::vector<uint8_t> synthesizeCoreBackendAudioQuery(CoreBackendState &backendState, const std::string &audioQueryJson, uint32_t styleId);
 std::vector<uint8_t> synthesizeCoreBackendText(CoreBackendState &backendState, const std::string &text, uint32_t styleId);
 std::vector<uint8_t> synthesizeCoreBackendKana(CoreBackendState &backendState, const std::string &kana, uint32_t styleId);
-void streamCoreBackendAudioQuery(CoreBackendState &backendState, const std::string &audioQueryJson, uint32_t styleId, size_t chunkFrames, const std::function<void(const CoreBackendPcmStreamInfo &)> &startStream, const std::function<void(const uint8_t *, size_t)> &writeChunk);
 std::string createCoreBackendSingFrameAudioQuery(CoreBackendState &backendState, const std::string &scoreJson, uint32_t styleId);
 std::string createCoreBackendSingFrameF0(CoreBackendState &backendState, const std::string &scoreJson, const std::string &frameAudioQueryJson, uint32_t styleId);
 std::string createCoreBackendSingFrameVolume(CoreBackendState &backendState, const std::string &scoreJson, const std::string &frameAudioQueryJson, uint32_t styleId);

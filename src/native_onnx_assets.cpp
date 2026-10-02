@@ -150,7 +150,9 @@ static std::vector<uint8_t> createNativeOnnxExportedModelBytes(NativeOnnxApi &na
     }
 }
 
-static bool canFallbackToNativeOnnxExportLibrary(NativeOnnxApi &nativeOnnxApi) {
+static bool canFallbackToNativeOnnxExportLibrary(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState) {
+    // GPU 選択後の失敗を CPU 成功に偽装しない。EP 内の通常の部分 CPU 実行とは別。
+    if (runtimeState && runtimeState->isGpuExecutionProviderSelected) return false;
     fs::path exportLibraryPath = getNativeOnnxVvBinExportLibraryPath(nativeOnnxApi);
     return !exportLibraryPath.empty() && exportLibraryPath != nativeOnnxApi.libraryPath && fs::exists(exportLibraryPath);
 }
@@ -371,7 +373,18 @@ static std::vector<NativeOnnxTraceInput> runNativeOnnxDeterministicSingTeacherMo
     return outputTensors;
 }
 
+const NativeOnnxRuntimeState *SelectModel(const NativeOnnxRuntimeState *State, const ModelAssetRecord &Asset, NativeOnnxRuntimeState &Cpu) {
+    // 実測で小さな音長・音高・歌唱教師モデルは GPU 転送の方が高コスト。波形デコーダだけを GPU に置く。
+    if (!State || !State->isGpuExecutionProviderSelected || Asset.entryName == "models/d.bin" || Asset.entryName == "models/sd.bin") return State;
+    Cpu = *State; // libraryHandle は借用。所有元の runtimeState は変更しない。
+    Cpu.selectedExecutionProvider = "CPUExecutionProvider";
+    Cpu.isGpuExecutionProviderSelected = false;
+    return &Cpu;
+}
+
 std::vector<NativeOnnxTraceInput> runNativeOnnxSingTeacherModelAssetBytes(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const ModelAssetRecord &modelAsset, const std::vector<NativeOnnxTraceInput> &inputTensors, uint16_t cpuThreadCount, bool shouldUseVvBinConfig) {
+    NativeOnnxRuntimeState Cpu;
+    runtimeState = SelectModel(runtimeState, modelAsset, Cpu);
     if (getNativeOnnxSingTeacherMode() == NativeOnnxSingTeacherMode::Deterministic) {
         return runNativeOnnxDeterministicSingTeacherModelAssetBytes(nativeOnnxApi, runtimeState, modelAsset, inputTensors, cpuThreadCount);
     }
@@ -398,7 +411,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxSingTeacherModelAssetBytes(Native
                 false,
                 createNativeOnnxModelAssetSessionCacheKey(nativeOnnxApi, runtimeState, modelAsset, cpuThreadCount, false));
         } catch (...) {
-            if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi)) {
+            if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi, runtimeState)) {
                 throw;
             }
             outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, modelAsset, nullptr, inputTensors, cpuThreadCount);
@@ -409,6 +422,8 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxSingTeacherModelAssetBytes(Native
 }
 
 std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const ModelAssetRecord &modelAsset, const std::vector<NativeOnnxTraceInput> &inputTensors, uint16_t cpuThreadCount, bool shouldUseVvBinConfig) {
+    NativeOnnxRuntimeState Cpu;
+    runtimeState = SelectModel(runtimeState, modelAsset, Cpu);
     if (shouldUseVvBinConfig) {
         std::vector<uint8_t> modelBytes = extractNativeOnnxModelAssetBytes(modelAsset);
         std::vector<NativeOnnxTraceInput> outputTensors = runNativeOnnxModelBytes(
@@ -434,7 +449,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &na
             false,
             createNativeOnnxModelAssetSessionCacheKey(nativeOnnxApi, runtimeState, modelAsset, cpuThreadCount, false));
     } catch (...) {
-        if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi)) {
+        if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi, runtimeState)) {
             throw;
         }
         outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, modelAsset, nullptr, inputTensors, cpuThreadCount);
@@ -444,6 +459,8 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &na
 }
 
 std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const ModelAssetRecord &modelAsset, const std::vector<uint8_t> &modelBytes, const std::vector<NativeOnnxTraceInput> &inputTensors, uint16_t cpuThreadCount, bool shouldUseVvBinConfig) {
+    NativeOnnxRuntimeState Cpu;
+    runtimeState = SelectModel(runtimeState, modelAsset, Cpu);
     std::vector<NativeOnnxTraceInput> outputTensors;
     if (shouldUseVvBinConfig) {
         outputTensors = runNativeOnnxModelBytes(nativeOnnxApi, runtimeState, modelBytes, inputTensors, cpuThreadCount, true, createNativeOnnxModelAssetSessionCacheKey(nativeOnnxApi, runtimeState, modelAsset, cpuThreadCount, true));
@@ -452,7 +469,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &na
             fs::path exportedModelPath = getNativeOnnxExportedModelCachePath(nativeOnnxApi, modelAsset, cpuThreadCount);
             outputTensors = runNativeOnnxModelPath(nativeOnnxApi, runtimeState, exportedModelPath, inputTensors, cpuThreadCount, false, createNativeOnnxModelAssetSessionCacheKey(nativeOnnxApi, runtimeState, modelAsset, cpuThreadCount, false));
         } catch (...) {
-            if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi)) {
+            if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi, runtimeState)) {
                 throw;
             }
             outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, modelAsset, &modelBytes, inputTensors, cpuThreadCount);

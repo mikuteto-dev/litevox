@@ -79,7 +79,7 @@ static void printUsage() {
         << "  --setting PATH      setting json path\n"
         << "  --presets PATH      presets json path\n"
         << "  --library-dir DIR   installed voice library directory\n"
-        << "  --backend MODE      native, minimal-ort, voicevox-core, or core-fork; default native\n"
+        << "  --backend MODE      native, minimal-ort, or voicevox-core; default native\n"
         << "  --core-profile NAME auto, talk-only, or full\n"
         << "  --acceleration-mode auto, cpu, or gpu\n"
         << "  --gpu               shorthand for --acceleration-mode gpu\n"

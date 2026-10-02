@@ -468,7 +468,7 @@ static void loadVoiceModel(RuntimeState &runtimeState, size_t modelIndex) {
     bool shouldStoreModelBytes = !getCoreBackendCapabilities(runtimeState.coreBackend).supportsVvmAssetLoader;
     cacheModelAssets(runtimeState.modelSessionCache, modelRecord.modelAssets, shouldStoreModelBytes);
     runtimeState.hasModelSessionCache = true;
-    modelRecord.modelId = loadCoreBackendVoiceModelFromAssets(runtimeState.coreBackend, modelRecord.modelPath, createModelAssetJson(modelRecord.modelAssets));
+    modelRecord.modelId = loadCoreBackendVoiceModel(runtimeState.coreBackend, modelRecord.modelPath);
     modelRecord.hasModelId = true;
     modelRecord.isLoaded = true;
     markSharedStylesLoaded(runtimeState, modelRecord.styleIds);
