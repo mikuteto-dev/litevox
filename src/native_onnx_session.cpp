@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -259,6 +260,24 @@ NativeOnnxValueDescriptor readNativeOnnxValueDescriptor(NativeOnnxApi &nativeOnn
 }
 
 
+static void CaptureProfile(NativeOnnxApi Api, NativeOnnxCachedSession &Session, OrtAllocator *Allocator, const NativeOnnxRuntimeState *State) {
+    const char *Prefix = std::getenv("LITEVOX_ORT_PROFILE");
+    if (!State || !Prefix || !*Prefix) return;
+    auto End = Api.EndProfile;
+    Session.FinishProfile = [Api, End, Allocator, Handle = Session.session] {
+        char *Path = nullptr;
+        OrtStatus *Status = End(Handle, Allocator, &Path);
+        if (Status) {
+            std::fprintf(stderr, "ORT profile 書き出し失敗: %s\n", Api.getErrorMessage(Status));
+            Api.releaseStatus(Status);
+        }
+        if (Path) {
+            Status = Api.allocatorFree(Allocator, Path);
+            if (Status) Api.releaseStatus(Status);
+        }
+    };
+}
+
 std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const std::vector<uint8_t> &modelBytes, uint16_t cpuThreadCount, bool shouldUseVvBinConfig) {
     std::shared_ptr<NativeOnnxCachedSession> cachedSession = std::make_shared<NativeOnnxCachedSession>();
     OrtSessionOptions *sessionOptions = nullptr;
@@ -291,6 +310,7 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
             cachedSession->outputDescriptors.push_back(readNativeOnnxValueDescriptor(nativeOnnxApi, cachedSession->session, allocator, false, outputIndex));
         }
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createCpuMemoryInfo(0, 0, &cachedSession->memoryInfo), "CPU memory info 作成");
+        CaptureProfile(nativeOnnxApi, *cachedSession, allocator, runtimeState);
         nativeOnnxApi.releaseSessionOptions(sessionOptions);
         return cachedSession;
     } catch (...) {
@@ -333,6 +353,7 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
             cachedSession->outputDescriptors.push_back(readNativeOnnxValueDescriptor(nativeOnnxApi, cachedSession->session, allocator, false, outputIndex));
         }
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createCpuMemoryInfo(0, 0, &cachedSession->memoryInfo), "CPU memory info 作成");
+        CaptureProfile(nativeOnnxApi, *cachedSession, allocator, runtimeState);
         nativeOnnxApi.releaseSessionOptions(sessionOptions);
         return cachedSession;
     } catch (...) {

@@ -1,0 +1,59 @@
+diff --git a/onnxruntime/core/providers/webgpu/nn/conv.cc b/onnxruntime/core/providers/webgpu/nn/conv.cc
+index a9a4bd6..8f8591b 100644
+--- a/onnxruntime/core/providers/webgpu/nn/conv.cc
++++ b/onnxruntime/core/providers/webgpu/nn/conv.cc
+@@ -47,6 +47,11 @@ Status Conv<is_channels_last, is_fused>::ComputeInternal(ComputeContext& context
+       kernel_shape = TensorShape(TensorShapeVector{kernel_shape[0], kernel_shape[3], kernel_shape[1], kernel_shape[2]});
+       break;
+   }
++  if (prepacked_kernel_ && IsOneDim) {
++    // Packing uses OIHW, but Conv attributes and external tensors remain one-dimensional.
++    ORT_ENFORCE(kernel_shape.NumDimensions() == 4 && kernel_shape[2] == 1);
++    kernel_shape = TensorShape(TensorShapeVector{kernel_shape[0], kernel_shape[1], kernel_shape[3]});
++  }
+   ConvAttributes::ConvPadVector local_pads(conv_attrs_.pads.begin(), conv_attrs_.pads.end());
+   TensorShapeVector local_dilations(conv_attrs_.dilations.begin(), conv_attrs_.dilations.end());
+   TensorShapeVector local_strides(conv_attrs_.strides.begin(), conv_attrs_.strides.end());
+@@ -303,6 +308,13 @@ Status Conv<is_channels_last, is_fused>::PrePackInternal(ComputeContextBase& con
+   const auto& kernel_shape = tensor.Shape();
+   const auto& dims = kernel_shape.GetDims();
+
++  if (dims.size() == 3) {
++    IsOneDim = true;
++    const Tensor Weight(tensor.DataType(), TensorShape{dims[0], dims[1], 1, dims[2]},
++                        const_cast<void*>(tensor.DataRaw()), tensor.Location());
++    return PrePackInternal(context, Weight, input_idx, alloc, is_packed);
++  }
++
+   // Conv kernels must be 4D: [O, I, H, W]
+   if (dims.size() != 4) {
+     return Status::OK();
+@@ -366,6 +378,17 @@ Status Conv<is_channels_last, is_fused>::PrePackInternal(ComputeContextBase& con
+   // Get pads and strides (mirroring ComputeInternal logic)
+   std::vector<int64_t> pads(conv_attrs_.pads.begin(), conv_attrs_.pads.end());
+   std::vector<int64_t> strides(conv_attrs_.strides.begin(), conv_attrs_.strides.end());
++  if (IsOneDim) {
++    if (!pads.empty()) {
++      ORT_RETURN_IF_NOT(pads.size() == 2, "Conv1D requires two pads.");
++      pads.insert(pads.begin(), 0);
++      pads.insert(pads.begin() + 2, 0);
++    }
++    if (!strides.empty()) {
++      ORT_RETURN_IF_NOT(strides.size() == 1, "Conv1D requires one stride.");
++      strides.insert(strides.begin(), 1);
++    }
++  }
+
+   // Default pads and strides if not specified (for 4D/Conv2D: 4 pads, 2 strides)
+   if (pads.empty()) {
+diff --git a/onnxruntime/core/providers/webgpu/nn/conv.h b/onnxruntime/core/providers/webgpu/nn/conv.h
+index a64a206..cffb914 100644
+--- a/onnxruntime/core/providers/webgpu/nn/conv.h
++++ b/onnxruntime/core/providers/webgpu/nn/conv.h
+@@ -49,5 +49,6 @@ class Conv : public WebGpuKernel {
+   // Layout of the tensor ComputeInternal ends up consuming -- `prepacked_kernel_` when it
+   // is set, otherwise input 1. Stays `OIHW` while `prepacked_kernel_` is null.
+   KernelLayout kernel_layout_{KernelLayout::OIHW};
++  bool IsOneDim = false;
+   mutable MatMulOptImplCache matmul_compute_cache_;
+ };

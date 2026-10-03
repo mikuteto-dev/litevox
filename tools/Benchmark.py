@@ -65,6 +65,7 @@ def Main():
     Parser.add_argument("--out", type=Path, required=True)
     Parser.add_argument("--case", action="append", choices=["talk-short", "talk-long", "song"], dest="Cases")
     Parser.add_argument("--replay", type=Path, help="Reuse exact saved request payloads instead of generating new reference queries")
+    Parser.add_argument("--exact", action="store_true", help="Require byte-identical first and measured WAV responses across engines")
     Args = Parser.parse_args()
     if Args.runs < 2 or not 1 <= Args.workers <= Args.runs:
         Parser.error("runs >= 2 and 1 <= workers <= runs are required")
@@ -83,6 +84,9 @@ def Main():
         Saved = json.loads(Args.replay.read_text())
         if Saved["score"] != Score:
             Parser.error("replay score differs from --score")
+        Missing = set(Args.Cases or []) - {Name.rsplit("-", 1)[0] for Name in Saved["cases"]}
+        if Missing:
+            Parser.error("replay missing requested cases: " + ", ".join(sorted(Missing)))
         Cases = []
         for Name, Case in Saved["cases"].items():
             if Name.rsplit("-", 1)[0] not in Selected:
@@ -133,6 +137,8 @@ def Main():
                 Request(Url + Target, Body)
         if IsWave and any(Shape != Shapes[0] for Shape in Shapes):
             raise ValueError(f"{Name}: engines returned different WAV shapes: {Shapes}")
+        if IsWave and Args.exact and len({Record["wave"]["sha256"] for Record in Records.values()}) != 1:
+            raise ValueError(f"{Name}: engines returned different WAV bytes")
         # Alternating engine order reduces order/thermal bias; do not run engines simultaneously.
         with concurrent.futures.ThreadPoolExecutor(max_workers=Args.workers) as Pool:
             for Trial in range(Args.runs):
@@ -144,6 +150,8 @@ def Main():
                     for Call in Calls:
                         Elapsed, Data = Call.result()
                         if IsWave:
+                            if Args.exact and hashlib.sha256(Data).hexdigest() != Records[Engine]["wave"]["sha256"]:
+                                raise ValueError(f"{Name}/{Engine}: measured WAV bytes changed")
                             with wave.open(io.BytesIO(Data)) as Audio:
                                 Shape = [Audio.getframerate(), Audio.getnchannels(), Audio.getsampwidth(), Audio.getnframes()]
                                 if Shape != Shapes[0] or len(Audio.readframes(Shape[3])) != Shape[3] * Shape[1] * Shape[2]:

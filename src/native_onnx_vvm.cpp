@@ -119,6 +119,7 @@ static uint64_t readNativeOnnxProtoVarint(const uint8_t *messageBytes, size_t me
     int shift = 0;
     while (offset < messageSize && shift < 64) {
         uint8_t byteValue = messageBytes[offset++];
+        if (shift == 63 && (byteValue & 0xfe)) throw std::runtime_error("protobuf varint overflow");
         value |= static_cast<uint64_t>(byteValue & 0x7f) << shift;
         if ((byteValue & 0x80) == 0) {
             return value;

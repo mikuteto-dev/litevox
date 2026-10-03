@@ -1,4 +1,5 @@
 #include "cli.hpp"
+#include "native_onnx.hpp"
 #include "utility.hpp"
 
 #include <cstdlib>
@@ -13,6 +14,9 @@ int main(int argc, char **argv) {
 #endif
         setEnvironmentVariable("RUST_LOG", "error");
         int exitCode = runCli(argc, argv);
+        // 通常の高速終了は維持し、診断時だけ _Exit 前に profile を確定する。
+        const char *Profile = std::getenv("LITEVOX_ORT_PROFILE");
+        if (Profile && *Profile) clearNativeOnnxCaches();
         std::cout.flush();
         std::cerr.flush();
         std::_Exit(exitCode);

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -135,6 +136,7 @@ using OrtCreateTensorWithDataAsOrtValueFunction = OrtStatus *(*)(const OrtMemory
 using OrtGetTensorMutableDataFunction = OrtStatus *(*)(OrtValue *, void **);
 using OrtCreateCpuMemoryInfoFunction = OrtStatus *(*)(int32_t, int32_t, OrtMemoryInfo **);
 using OrtAllocatorFreeFunction = OrtStatus *(*)(OrtAllocator *, void *);
+using ProfileEnd = OrtStatus *(*)(OrtSession *, OrtAllocator *, char **);
 using OrtGetAllocatorWithDefaultOptionsFunction = OrtStatus *(*)(OrtAllocator **);
 using OrtGetAvailableProvidersFunction = OrtStatus *(*)(char ***, int *);
 using OrtReleaseAvailableProvidersFunction = OrtStatus *(*)(char **, int);
@@ -190,6 +192,7 @@ struct NativeOnnxApi {
     OrtGetTensorMutableDataFunction getTensorMutableData = nullptr;
     OrtCreateCpuMemoryInfoFunction createCpuMemoryInfo = nullptr;
     OrtAllocatorFreeFunction allocatorFree = nullptr;
+    ProfileEnd EndProfile = nullptr;
     OrtGetAllocatorWithDefaultOptionsFunction getAllocatorWithDefaultOptions = nullptr;
     OrtGetAvailableProvidersFunction getAvailableProviders = nullptr;
     OrtReleaseAvailableProvidersFunction releaseAvailableProviders = nullptr;
@@ -321,6 +324,7 @@ struct NativeOnnxCachedSession {
     // DirectML は同一セッションでの並列 Run を許可しない。
     std::mutex RunMutex;
     bool IsSerial = false;
+    std::function<void()> FinishProfile;
     void *libraryHandle = nullptr;
     OrtEnv *env = nullptr;
     OrtSession *session = nullptr;
@@ -332,6 +336,7 @@ struct NativeOnnxCachedSession {
     std::vector<NativeOnnxValueDescriptor> outputDescriptors;
 
     ~NativeOnnxCachedSession() {
+        if (FinishProfile) FinishProfile();
         if (memoryInfo && releaseMemoryInfo) {
             releaseMemoryInfo(memoryInfo);
         }

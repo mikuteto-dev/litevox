@@ -260,6 +260,7 @@ NativeOnnxApi loadNativeOnnxApi(const fs::path &onnxruntimeLibraryPath) {
     nativeOnnxApi.setIntraOpNumThreads = loadNativeOnnxApiFunction<OrtSetThreadCountFunction>(nativeOnnxApi.api, ortApiIndexSetIntraOpNumThreads);
     nativeOnnxApi.setInterOpNumThreads = loadNativeOnnxApiFunction<OrtSetThreadCountFunction>(nativeOnnxApi.api, ortApiIndexSetInterOpNumThreads);
     nativeOnnxApi.addSessionConfigEntry = loadNativeOnnxApiFunction<OrtAddSessionConfigEntryFunction>(nativeOnnxApi.api, ortApiIndexAddSessionConfigEntry);
+    nativeOnnxApi.EndProfile = loadNativeOnnxApiFunction<ProfileEnd>(nativeOnnxApi.api, 110);
     nativeOnnxApi.appendExecutionProvider = loadNativeOnnxApiFunction<OrtSessionOptionsAppendExecutionProviderFunction>(nativeOnnxApi.api, ortApiIndexSessionOptionsAppendExecutionProvider);
     nativeOnnxApi.appendExecutionProviderCoreML = reinterpret_cast<OrtSessionOptionsAppendExecutionProviderCoreMLFunction>(loadDynamicLibrarySymbol(nativeOnnxApi.libraryHandle, "OrtSessionOptionsAppendExecutionProvider_CoreML"));
     nativeOnnxApi.CreateCuda = loadNativeOnnxApiFunction<CreateCudaOptions>(nativeOnnxApi.api, CudaCreateIndex);
@@ -527,6 +528,14 @@ void configureNativeOnnxSessionOptions(NativeOnnxApi &nativeOnnxApi, const Nativ
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.addSessionConfigEntry(sessionOptions, "session.use_vv_bin", "1"), "vv_bin session 設定");
     }
     if (runtimeState) {
+        const char *Prefix = std::getenv("LITEVOX_ORT_PROFILE");
+        if (Prefix && *Prefix) {
+            // セッションごとに名前を分け、同秒に生成したモデルの profile 上書きを防ぐ。
+            static std::atomic_uint64_t Next{0};
+            fs::path Path = std::string(Prefix) + "-" + std::to_string(Next.fetch_add(1));
+            auto Profile = loadNativeOnnxApiFunction<OrtSetOptimizedModelFilePathFunction>(nativeOnnxApi.api, 14);
+            ensureNativeOnnxCall(nativeOnnxApi, Profile(sessionOptions, Path.c_str()), "ORT profiling 有効化");
+        }
         appendNativeOnnxExecutionProvider(nativeOnnxApi, sessionOptions, runtimeState->selectedExecutionProvider);
     }
 }

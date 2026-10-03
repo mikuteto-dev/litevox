@@ -67,6 +67,12 @@ int main() {
             assert(Whole[Position] == Whole[Position + 2] && Whole[Position + 1] == Whole[Position + 3]);
         }
     }
+    for (const std::vector<uint8_t> &Bytes : std::vector<std::vector<uint8_t>>{{0x3a, 0x80}, {0x08, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02}}) {
+        bool IsInvalid = false;
+        size_t Count = 0;
+        try { rewriteNativeOnnxModelRandomSeed(Bytes.data(), Bytes.size(), 0, Count); } catch (const std::runtime_error &) { IsInvalid = true; }
+        assert(IsInvalid);
+    }
     NativeOnnxApi Api;
     Api.createEnv = [](int32_t, const char *, OrtEnv **Env) -> OrtStatus * { *Env = nullptr; return nullptr; };
     Api.releaseEnv = [](OrtEnv *) {};
