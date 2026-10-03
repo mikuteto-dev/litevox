@@ -22,7 +22,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
@@ -349,8 +348,54 @@ static int runCommand(const CliOptions &cliOptions) {
     return 0;
 }
 
+static void ResolveSpeakers(CliOptions &Options) {
+    if (Options.SpeakerNames.empty() && Options.TeacherName.empty()) return;
+    std::string Type = "talk";
+    switch (Options.commandMode) {
+        case CommandMode::Sing: case CommandMode::FrameSynthesis: Type = "frame_decode"; break;
+        case CommandMode::SingQuery: case CommandMode::SingF0: case CommandMode::SingVolume:
+        case CommandMode::BenchSong: case CommandMode::BenchHttpSong: Type = "sing"; break;
+        case CommandMode::ApiSession: case CommandMode::BenchHttp:
+            if (Options.httpPath.find("/frame_synthesis") == 0) Type = "frame_decode";
+            else if (Options.httpPath.find("/sing_frame_") == 0) Type = "sing";
+            break;
+        default: break;
+    }
+    std::vector<StyleRecord> Styles;
+    bool HasMetas = false;
+    auto Resolve = [&](const std::string &Text, const std::string &StyleType) {
+        if (!Text.empty() && (Text[0] == '-' || Text[0] == '+' || (Text[0] >= '0' && Text[0] <= '9'))) {
+            return ResolveStyle(Text, {}, StyleType);
+        }
+        if (!HasMetas) {
+            if (Options.commandMode == CommandMode::ApiSession || Options.commandMode == CommandMode::BenchHttp || Options.commandMode == CommandMode::BenchHttpSong) {
+                Styles = extractStylesFromMetasJson(FetchSpeakers(Options, StyleType));
+            } else {
+                for (const auto &Archive : collectArchiveSummaries(Options.runtimePaths.modelPaths)) {
+                    auto Entries = extractStylesFromMetasJson(Archive.metasJson);
+                    Styles.insert(Styles.end(), Entries.begin(), Entries.end());
+                }
+            }
+            HasMetas = true;
+        }
+        return ResolveStyle(Text, Styles, StyleType);
+    };
+    for (const auto &Name : Options.SpeakerNames) Options.benchSpeakers.push_back(Resolve(Name, Type));
+    if (!Options.benchSpeakers.empty()) Options.speaker = Options.benchSpeakers.front();
+    if (!Options.TeacherName.empty()) Options.Teacher = Resolve(Options.TeacherName, "sing");
+}
+
 int runCli(int argc, char **argv) {
     CliOptions cliOptions = parseCliOptions(argc, argv);
+    if (!cliOptions.ExecutionProvider.empty()) {
+        std::string Backend = lowercaseAscii(cliOptions.runtimePaths.backendMode);
+        if (Backend != "native" && Backend != "vvm-native" && Backend != "vvm_native" && Backend != "minimal-ort" && Backend != "minimal_ort") {
+            throw std::invalid_argument("--execution-provider は native / minimal-ort バックエンド専用です");
+        }
+        setEnvironmentVariable("LITEVOX_EXECUTION_PROVIDER", cliOptions.ExecutionProvider);
+    }
+    ResolveSpeakers(cliOptions);
+    resolveAutoDiscoveredOnnxruntimePath(cliOptions);
     bool shouldSetOrtSeedEnvironment = false;
     bool shouldSetNativeSingSeedEnvironment = false;
     if (cliOptions.hasOnnxSeed) {

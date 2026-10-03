@@ -57,7 +57,7 @@ $(BUILD_DIR)/Compatibility: tests/Compatibility.cpp $(filter-out $(BUILD_DIR)/ma
 	$(CXX) $(CXXFLAGS) -UNDEBUG -Isrc $< $(filter-out $(BUILD_DIR)/main.o,$(OBJ)) -o $@ $(LDFLAGS) $(LDLIBS)
 
 check: $(BUILD_DIR)/Compatibility
-	./$(BUILD_DIR)/Compatibility
+	./$(BUILD_DIR)/Compatibility $(if $(RUNTIME_ROOT),"$(RUNTIME_ROOT)",)
 
 dist: $(TARGET)
 	mkdir -p $(DIST_DIR)

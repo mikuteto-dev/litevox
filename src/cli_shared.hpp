@@ -73,6 +73,9 @@ struct CliOptions {
     size_t workers = 1;
     uint32_t speaker = 3;
     uint32_t Teacher = 6000;
+    std::vector<std::string> SpeakerNames;
+    std::string TeacherName;
+    std::string ExecutionProvider;
     std::vector<uint32_t> benchSpeakers;
     std::vector<std::string> benchTexts;
     std::vector<std::filesystem::path> benchScorePaths;

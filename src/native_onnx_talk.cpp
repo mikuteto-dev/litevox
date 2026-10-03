@@ -377,48 +377,54 @@ static std::vector<uint8_t> createNativeOnnxWavBytes(const NativeOnnxTraceInput 
 }
 
 static size_t getNativeOnnxPaddedDecoderFrameCount(const NativeOnnxTraceInput &f0Tensor) {
-    std::vector<float> paddedF0Values = readNativeOnnxTensorValues<float>(f0Tensor, 1);
-    if (!f0Tensor.dimensions.empty() && f0Tensor.dimensions[0] >= 0 && static_cast<size_t>(f0Tensor.dimensions[0]) != paddedF0Values.size()) {
-        throw std::runtime_error("decoder f0 frame 数が一致しません");
+    if (f0Tensor.elementType != 1 || f0Tensor.bytes.size() % sizeof(float) != 0) {
+        throw std::invalid_argument("decoder f0 tensor が不正です");
     }
-    return paddedF0Values.size();
+    size_t Frames = f0Tensor.bytes.size() / sizeof(float);
+    if (!f0Tensor.dimensions.empty() && f0Tensor.dimensions[0] >= 0 && static_cast<size_t>(f0Tensor.dimensions[0]) != Frames) {
+        throw std::invalid_argument("decoder f0 frame 数が一致しません");
+    }
+    return Frames;
 }
 
-static std::vector<float> sliceNativeOnnxFrameValues(const std::vector<float> &frameValues, size_t frameWidth, size_t startFrame, size_t endFrame) {
-    if (frameWidth == 0 || startFrame > endFrame || endFrame * frameWidth > frameValues.size()) {
-        throw std::runtime_error("decoder chunk frame が不正です");
+static NativeOnnxTraceInput SliceFrames(const NativeOnnxTraceInput &Tensor, size_t Width, size_t Start, size_t End) {
+    if (Width == 0 || Width > std::numeric_limits<size_t>::max() / sizeof(float) || Tensor.elementType != 1) {
+        throw std::invalid_argument("decoder chunk dtype / width が不正です");
     }
-    auto sliceStartIterator = frameValues.begin() + static_cast<std::vector<float>::difference_type>(startFrame * frameWidth);
-    auto sliceEndIterator = frameValues.begin() + static_cast<std::vector<float>::difference_type>(endFrame * frameWidth);
-    return std::vector<float>(sliceStartIterator, sliceEndIterator);
+    size_t Stride = Width * sizeof(float);
+    if (Tensor.bytes.size() % Stride != 0 || Start > End || End > Tensor.bytes.size() / Stride) {
+        throw std::invalid_argument("decoder chunk frame が不正です");
+    }
+    NativeOnnxTraceInput Chunk;
+    Chunk.name = Tensor.name;
+    Chunk.elementType = Tensor.elementType;
+    Chunk.dimensions = {static_cast<int64_t>(End - Start), static_cast<int64_t>(Width)};
+    Chunk.bytes.assign(Tensor.bytes.begin() + Start * Stride, Tensor.bytes.begin() + End * Stride);
+    return Chunk;
 }
 
-static NativeOnnxDecoderChunkInputSet createNativeOnnxDecoderChunkInputs(const std::vector<NativeOnnxTraceInput> &decoderInputs, size_t coreStartFrame, size_t coreEndFrame, size_t contextFrames) {
+NativeOnnxDecoderChunkInputSet createNativeOnnxDecoderChunkInputs(const std::vector<NativeOnnxTraceInput> &decoderInputs, size_t coreStartFrame, size_t coreEndFrame, size_t contextFrames) {
     const NativeOnnxTraceInput &f0Tensor = requireNativeOnnxTensor(decoderInputs, "f0");
     const NativeOnnxTraceInput &phonemeTensor = requireNativeOnnxTensor(decoderInputs, "phoneme");
     NativeOnnxTraceInput speakerIdTensor = requireNativeOnnxTensor(decoderInputs, "speaker_id");
-    std::vector<float> paddedF0Values = readNativeOnnxTensorValues<float>(f0Tensor, 1);
-    std::vector<float> paddedPhonemeValues = readNativeOnnxTensorValues<float>(phonemeTensor, 1);
-    size_t paddedFrameCount = paddedF0Values.size();
+    size_t paddedFrameCount = getNativeOnnxPaddedDecoderFrameCount(f0Tensor);
     size_t paddingFrameCount = nativeOnnxDecoderPaddingFrames * 2;
-    if (paddedFrameCount < paddingFrameCount || paddedPhonemeValues.size() != paddedFrameCount * static_cast<size_t>(nativeOnnxPhonemeSize)) {
-        throw std::runtime_error("decoder 入力 frame 数が不正です");
+    if (paddedFrameCount < paddingFrameCount || phonemeTensor.elementType != 1 || phonemeTensor.bytes.size() % (sizeof(float) * nativeOnnxPhonemeSize) != 0 || phonemeTensor.bytes.size() / (sizeof(float) * nativeOnnxPhonemeSize) != paddedFrameCount) {
+        throw std::invalid_argument("decoder 入力 frame 数が不正です");
     }
     size_t coreFrameCount = paddedFrameCount - paddingFrameCount;
     if (coreStartFrame > coreEndFrame || coreEndFrame > coreFrameCount) {
-        throw std::runtime_error("decoder chunk 範囲が不正です");
+        throw std::invalid_argument("decoder chunk 範囲が不正です");
     }
     size_t targetStartFrame = nativeOnnxDecoderPaddingFrames + coreStartFrame;
     size_t targetEndFrame = nativeOnnxDecoderPaddingFrames + coreEndFrame;
     size_t sliceStartFrame = coreStartFrame > contextFrames ? coreStartFrame - contextFrames : 0;
-    size_t sliceEndFrame = std::min(paddedFrameCount, coreEndFrame + paddingFrameCount + contextFrames);
-    size_t sliceFrameCount = sliceEndFrame - sliceStartFrame;
-    std::vector<float> f0Values = sliceNativeOnnxFrameValues(paddedF0Values, 1, sliceStartFrame, sliceEndFrame);
-    std::vector<float> phonemeValues = sliceNativeOnnxFrameValues(paddedPhonemeValues, static_cast<size_t>(nativeOnnxPhonemeSize), sliceStartFrame, sliceEndFrame);
+    size_t sliceEndFrame = coreEndFrame + paddingFrameCount;
+    sliceEndFrame += std::min(contextFrames, paddedFrameCount - sliceEndFrame);
     NativeOnnxDecoderChunkInputSet inputSet;
     inputSet.tensors = {
-        createNativeOnnxFloatTensor("f0", {static_cast<int64_t>(sliceFrameCount), 1}, f0Values),
-        createNativeOnnxFloatTensor("phoneme", {static_cast<int64_t>(sliceFrameCount), nativeOnnxPhonemeSize}, phonemeValues),
+        SliceFrames(f0Tensor, 1, sliceStartFrame, sliceEndFrame),
+        SliceFrames(phonemeTensor, nativeOnnxPhonemeSize, sliceStartFrame, sliceEndFrame),
         speakerIdTensor,
     };
     inputSet.frontCropFrames = targetStartFrame - sliceStartFrame;
@@ -569,7 +575,6 @@ void streamNativeOnnxModelAssetsAudioQueryPcm(const fs::path &onnxruntimeLibrary
     NativeOnnxApi nativeOnnxApi = loadNativeOnnxApi(onnxruntimeLibraryPath);
     try {
         const ModelAssetRecord &decodeAsset = requireNativeOnnxModelAsset(modelAssets, "models/d.bin");
-        std::vector<uint8_t> decodeBytes = extractNativeOnnxModelAssetBytes(decodeAsset);
         std::vector<NativeOnnxTraceInput> decoderInputs = createNativeOnnxModelAssetDecoderInputs(nativeOnnxApi, nullptr, modelAssets, audioQueryText, styleId, cpuThreadCount, audioQuerySettings, shouldUseVvBinConfig);
         size_t paddedFrameCount = getNativeOnnxPaddedDecoderFrameCount(requireNativeOnnxTensor(decoderInputs, "f0"));
         size_t paddingFrameCount = nativeOnnxDecoderPaddingFrames * 2;
@@ -585,7 +590,7 @@ void streamNativeOnnxModelAssetsAudioQueryPcm(const fs::path &onnxruntimeLibrary
                 coreEndFrame = coreFrameCount;
             }
             NativeOnnxDecoderChunkInputSet chunkInputSet = createNativeOnnxDecoderChunkInputs(decoderInputs, coreStartFrame, coreEndFrame, contextFrames);
-            std::vector<NativeOnnxTraceInput> decodeOutputs = runNativeOnnxModelAssetBytes(nativeOnnxApi, nullptr, decodeAsset, decodeBytes, chunkInputSet.tensors, cpuThreadCount, shouldUseVvBinConfig);
+            std::vector<NativeOnnxTraceInput> decodeOutputs = runNativeOnnxModelAssetBytes(nativeOnnxApi, nullptr, decodeAsset, chunkInputSet.tensors, cpuThreadCount, shouldUseVvBinConfig);
             std::vector<float> waveValues = createNativeOnnxWaveValuesWithoutDecoderFramePadding(requireNativeOnnxTensor(decodeOutputs, "wave"), chunkInputSet.frontCropFrames, chunkInputSet.backCropFrames);
             std::vector<uint8_t> pcmBytes = Pcm.Convert(waveValues, coreEndFrame == coreFrameCount);
             if (!pcmBytes.empty()) {
@@ -651,10 +656,6 @@ void streamNativeOnnxModelAssetsAudioQueryPcm(const NativeOnnxRuntimeState &runt
     NativeOnnxApi nativeOnnxApi = loadNativeOnnxApi(runtimeState.libraryPath);
     try {
         const ModelAssetRecord &decodeAsset = requireNativeOnnxModelAsset(modelAssets, "models/d.bin");
-        std::vector<uint8_t> decodeBytes;
-        if (shouldUseVvBinConfig) {
-            decodeBytes = extractNativeOnnxModelAssetBytes(decodeAsset);
-        }
         std::vector<NativeOnnxTraceInput> decoderInputs = createNativeOnnxModelAssetDecoderInputs(nativeOnnxApi, &runtimeState, modelAssets, audioQueryText, styleId, cpuThreadCount, audioQuerySettings, shouldUseVvBinConfig);
         size_t paddedFrameCount = getNativeOnnxPaddedDecoderFrameCount(requireNativeOnnxTensor(decoderInputs, "f0"));
         size_t paddingFrameCount = nativeOnnxDecoderPaddingFrames * 2;
@@ -670,9 +671,7 @@ void streamNativeOnnxModelAssetsAudioQueryPcm(const NativeOnnxRuntimeState &runt
                 coreEndFrame = coreFrameCount;
             }
             NativeOnnxDecoderChunkInputSet chunkInputSet = createNativeOnnxDecoderChunkInputs(decoderInputs, coreStartFrame, coreEndFrame, contextFrames);
-            std::vector<NativeOnnxTraceInput> decodeOutputs = shouldUseVvBinConfig
-                ? runNativeOnnxModelAssetBytes(nativeOnnxApi, &runtimeState, decodeAsset, decodeBytes, chunkInputSet.tensors, cpuThreadCount, true)
-                : runNativeOnnxModelAssetBytes(nativeOnnxApi, &runtimeState, decodeAsset, chunkInputSet.tensors, cpuThreadCount, false);
+            std::vector<NativeOnnxTraceInput> decodeOutputs = runNativeOnnxModelAssetBytes(nativeOnnxApi, &runtimeState, decodeAsset, chunkInputSet.tensors, cpuThreadCount, shouldUseVvBinConfig);
             std::vector<float> waveValues = createNativeOnnxWaveValuesWithoutDecoderFramePadding(requireNativeOnnxTensor(decodeOutputs, "wave"), chunkInputSet.frontCropFrames, chunkInputSet.backCropFrames);
             std::vector<uint8_t> pcmBytes = Pcm.Convert(waveValues, coreEndFrame == coreFrameCount);
             if (!pcmBytes.empty()) {

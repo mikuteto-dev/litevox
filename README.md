@@ -9,7 +9,7 @@ LiteVox は、VOICEVOX 互換の音声合成・歌唱音声合成を提供する
 - **公式 zip の直接利用**: 公式配布の `voicevox-*.zip` を指定するだけで、自動的に展開・キャッシュして即座に起動可能
 - **高速な C++ ネイティブ推論**: 依存関係を最小限に抑えた C++17 実装による高速な音声合成
 - **GPU アクセラレーション**: WebGPU（Metal / DirectX / Vulkan）、DirectML、CUDA、CoreML に対応
-- **完全な機能サポート**: テキスト音声合成（TTS）、AudioQuery 生成、ストリーミング出力に加え、楽譜（Score）からの歌唱音声合成に対応
+- **読み上げ・歌唱音声合成**: テキスト音声合成（TTS）、AudioQuery 生成、ストリーミング出力に加え、楽譜（Score）からの歌唱音声合成に対応
 - **VOICEVOX 互換 HTTP サーバー**: 既存の VOICEVOX クライアントやエコシステムとそのまま連携可能
 - **状態の分離管理**: ユーザー辞書やプリセットなどの設定を、モデルデータから分離して永続化可能
 
@@ -86,7 +86,7 @@ make check
 ```sh
 dist/litevox tts \
   --runtime /path/to/voicevox-<platform>.zip \
-  --speaker 3 \
+  --speaker zunda \
   --text 'こんにちは、音声合成のテストです。' \
   --out output.wav
 ```
@@ -119,17 +119,95 @@ dist/litevox models \
 ```sh
 dist/litevox tts \
   --runtime /path/to/voicevox-<platform>.zip \
-  --speaker 3 \
+  --speaker zunda \
   --text 'ずんだもんなのだ。' \
   --out out.wav
 ```
+
+#### 話者を名前で指定する
+
+`--speaker` オプションには、従来のスタイル ID（数値）に加えて、**キャラクター名（日本語・英語別名）** や **スタイル名** を指定できます。
+
+- **ID 指定**: `--speaker 3`
+- **キャラクター名指定**: `--speaker zunda` または `--speaker ずんだもん`（「ノーマル」または「ふつう」スタイルが自動選択されます）
+- **スタイル明示指定**: `--speaker 'zunda:あまあま'`、`--speaker 'zunda:normal'`、`--speaker 'ずんだもん:ツンツン'`
+- **ID 併用指定**: `--speaker 'ritsu:6000'`（同一キャラクターでソングとハミングなどの同名スタイルを区別する場合に便利です）
+
+※ キャラクター名や英語別名は大文字・小文字を区別しません（例: `zunda`, `Zunda`, `ZUNDAMON`）。  
+※ キャラクター名のみで標準スタイルが一意に定まらない場合は、`--speaker 'goki:鬼ver.'` のようにスタイル名を明示してください。
+
+```sh
+# 指定例
+dist/litevox tts --runtime voicevox.zip --speaker 'zunda:ツンツン' --text 'なのだ！'
+dist/litevox tts --runtime voicevox.zip --speaker 'metan:ささやき' --text 'こんにちは。'
+dist/litevox tts --runtime voicevox.zip --speaker 'nurse-t:恐怖' --text 'テストです。'
+```
+
+<details>
+<summary>対応キャラクターの英語別名一覧（43 キャラクター）</summary>
+
+| キャラクター | 英語別名 |
+|---|---|
+| 四国めたん | `metan` |
+| ずんだもん | `zunda` / `zundamon` |
+| 春日部つむぎ | `tsumugi` |
+| 雨晴はう | `hau` |
+| 波音リツ | `ritsu` |
+| 玄野武宏 | `takehiro` |
+| 白上虎太郎 | `kotaro` |
+| 青山龍星 | `ryusei` |
+| 冥鳴ひまり | `himari` |
+| 九州そら | `sora` |
+| もち子さん | `mochiko` |
+| ちび式じい | `chibi` |
+| 櫻歌ミコ | `miko` |
+| ナースロボ＿タイプＴ | `nurse-t` |
+| †聖騎士 紅桜† | `benizakura` |
+| 雀松朱司 | `akashi` |
+| 麒ヶ島宗麟 | `sorin` |
+| 春歌ナナ | `nana` |
+| 猫使アル | `aru` |
+| 猫使ビィ | `bii` |
+| 栗田まろん | `maron` |
+| あいえるたん | `aierutan` |
+| 満別花丸 | `hanamaru` |
+| 琴詠ニア | `nia` |
+| 小夜/SAYO | `sayo` |
+| 後鬼 | `goki` |
+| Voidoll | `voidoll` |
+| ぞん子 | `zonko` |
+| 中部つるぎ | `tsurugi` |
+| 離途 | `rito` |
+| 黒沢冴白 | `kurosawa` |
+| ユーレイちゃん | `yurei` |
+| 東北ずん子 | `zunko` |
+| 東北きりたん | `kiritan` |
+| 東北イタコ | `itako` |
+| あんこもん | `ankomon` |
+| 夜語トバリ | `tobari` |
+| 暁記ミタマ | `mitama` |
+| 里石ユカ | `yuka` |
+| 中国うさぎ | `usagi` |
+| 剣崎雌雄 | `mesuo` |
+| No.7 | `no7` |
+| WhiteCUL | `whitecul` |
+
+</details>
+
+歌唱機能でも同様に名前で指定できます。
+```sh
+# 教師話者に波音リツ、歌唱話者にずんだもんを指定
+dist/litevox sing --runtime voicevox.zip --score score.json --teacher ritsu --speaker zunda --out song.wav
+```
+
+複数話者を指定するオプション（`--speakers`）でも、`--speakers zunda,metan,8` のように名前と ID を混在して指定可能です。
 
 ### 音声合成クエリの生成 (AudioQuery)
 
 ```sh
 dist/litevox query \
   --runtime /path/to/voicevox-<platform>.zip \
-  --speaker 3 \
+  --speaker zunda \
   --text 'ずんだもんなのだ。' \
   --out query.json
 ```
@@ -141,7 +219,7 @@ dist/litevox query \
 ```sh
 dist/litevox stream \
   --runtime /path/to/voicevox-<platform>.zip \
-  --speaker 3 \
+  --speaker zunda \
   --text '第一文です。第二文です。' \
   --format wav > out.wav
 ```
@@ -229,21 +307,33 @@ LiteVox は各プラットフォームに応じた GPU アクセラレーショ�
 - **Windows**: DirectML, CUDA, WebGPU (Direct3D 12)
 - **Linux**: CUDA, WebGPU (Vulkan)
 
-推論パイプラインでは、転送オーバーヘッドの小さい音長・音高予測モデルを CPU で処理し、計算負荷の大半を占める波形合成デコーダを GPU に配置するハイブリッド実行を行うことで、高いスループットを実現しています。
+推論パイプラインでは、転送オーバーヘッドの小さい音長・音高予測モデルを CPU で処理し、計算負荷の大半を占める波形合成デコーダを GPU に配置するハイブリッド実行を行うことで、高いスループットを実現しています。また、セッションの効率的なキャッシングや、ストリーミング合成時の不要なメモリ複製の削減により、低オーバーヘッドな推論を提供します。
 
 ### GPU の利用方法
 
-`--acceleration-mode` オプションで動作モードを指定できます：
-- `auto`: 利用可能な GPU Execution Provider を自動検出し、利用できない場合は CPU で動作します（デフォルト）
-- `gpu`: GPU による実行を要求します（対応環境が見つからない場合はエラー）
-- `cpu`: 常に CPU で実行します
+#### 動作モードの指定 (`--acceleration-mode`)
+
+- `auto`: 利用可能な GPU Execution Provider を自動検出し、利用できない場合は CPU で動作（デフォルト）
+- `gpu`: GPU による実行を要求（対応環境が見つからない場合はエラー）
+- `cpu`: 常に CPU で実行
+
+#### プロバイダの明示指定 (`--execution-provider`)
+
+特定の Execution Provider を明示的に指定することも可能です：
+- `WebGpuExecutionProvider`（macOS Metal / Windows Direct3D 12 / Linux Vulkan）
+- `CoreMLExecutionProvider`（macOS）
+- `CUDAExecutionProvider`（Windows / Linux NVIDIA GPU）
+- `DmlExecutionProvider`（Windows DirectML）
+
+※ 実際に選択されたプロバイダは `runtime_info` コマンドの `native_onnx_providers.selected` で確認できます。  
+※ macOS では、動的形状グラフとの互換性と安定性の観点から WebGPU (Metal) の利用を推奨しています（`auto` 時も優先されます）。
 
 ```sh
 # GPU モードで実行
 dist/litevox tts \
   --runtime /path/to/voicevox-<platform>.zip \
   --acceleration-mode gpu \
-  --speaker 3 \
+  --speaker zunda \
   --text 'GPU で合成しています。' \
   --out gpu_out.wav
 ```
@@ -256,7 +346,7 @@ dist/litevox tts \
 >   --runtime runtime-root \
 >   --onnxruntime /path/to/libonnxruntime.dylib \
 >   --acceleration-mode gpu \
->   --speaker 3 \
+>   --speaker zunda \
 >   --text 'Metal で合成しています。'
 > ```
 
@@ -315,6 +405,9 @@ dist/litevox vv-bin-export-onnx \
 ```sh
 # 単体テストおよび互換性チェック
 make check
+
+# 標準配布の全モデルで話者名・別名・全スタイルの対応を検証
+make check RUNTIME_ROOT=/path/to/full-runtime-root
 
 # 公式 zip と ONNX Runtime アーカイブからの組み立て検証
 tools/verify-runtime-from-archives.sh \

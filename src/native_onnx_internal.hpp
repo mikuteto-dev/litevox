@@ -407,6 +407,7 @@ bool IsCoremlProfile();
 const NativeOnnxRuntimeState *SelectModel(const NativeOnnxRuntimeState *State, const ModelAssetRecord &Asset, NativeOnnxRuntimeState &Cpu);
 const NativeOnnxTraceInput *findNativeOnnxTraceTensor(const std::vector<NativeOnnxTraceInput> &traceTensors, const std::string &tensorName);
 const NativeOnnxTraceInput &requireNativeOnnxTensor(const std::vector<NativeOnnxTraceInput> &traceTensors, const std::string &tensorName);
+NativeOnnxDecoderChunkInputSet createNativeOnnxDecoderChunkInputs(const std::vector<NativeOnnxTraceInput> &Inputs, size_t Start, size_t End, size_t Context);
 
 template <typename TensorValueType>
 std::vector<TensorValueType> readNativeOnnxTensorValues(const NativeOnnxTraceInput &tensor, int32_t expectedElementType) {
@@ -472,6 +473,7 @@ void appendNativeOnnxSessionInfoFromBytes(std::ostringstream &inspectStream, Nat
 void appendNativeOnnxSessionInfo(std::ostringstream &inspectStream, NativeOnnxApi &nativeOnnxApi, const fs::path &modelPath, const fs::path &inputDirectory, uint16_t cpuThreadCount);
 std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const std::vector<uint8_t> &modelBytes, uint16_t cpuThreadCount, bool shouldUseVvBinConfig);
 std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const fs::path &modelPath, uint16_t cpuThreadCount, bool shouldUseVvBinConfig);
+std::shared_ptr<NativeOnnxCachedSession> CacheSession(const std::string &Key, const std::function<std::shared_ptr<NativeOnnxCachedSession>()> &Create);
 std::shared_ptr<NativeOnnxCachedSession> getNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const std::vector<uint8_t> &modelBytes, uint16_t cpuThreadCount, bool shouldUseVvBinConfig, const std::string &sessionCacheKey);
 std::shared_ptr<NativeOnnxCachedSession> getNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const fs::path &modelPath, uint16_t cpuThreadCount, bool shouldUseVvBinConfig, const std::string &sessionCacheKey);
 std::vector<NativeOnnxTraceInput> runNativeOnnxPreparedSession(NativeOnnxApi &nativeOnnxApi, const std::shared_ptr<NativeOnnxCachedSession> &cachedSession, const std::vector<NativeOnnxTraceInput> &inputTensors);

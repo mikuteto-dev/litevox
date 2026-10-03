@@ -82,6 +82,7 @@ static void printUsage() {
         << "  --backend MODE      native, minimal-ort, or voicevox-core; default native\n"
         << "  --core-profile NAME auto, talk-only, or full\n"
         << "  --acceleration-mode auto, cpu, or gpu\n"
+        << "  --execution-provider NAME  select ORT provider explicitly (e.g. WebGpuExecutionProvider)\n"
         << "  --gpu               shorthand for --acceleration-mode gpu\n"
         << "  --cpu-threads N     CPU threads for synthesis; 0 uses core default\n"
         << "  --seed N            set ONNX Runtime random seed when supported\n"
@@ -91,9 +92,9 @@ static void printUsage() {
         << "  --http-path PATH    HTTP bench path, default /tts\n"
         << "  --add-http-path PATH  add another HTTP bench path\n"
         << "  --keep-alive        reuse one HTTP connection in bench-http\n"
-        << "  --speaker ID        style ID from `litevox models`\n"
-        << "  --teacher ID        query style for sing; default 6000\n"
-        << "  --speakers IDS      comma-separated style IDs for bench/bench-http\n"
+        << "  --speaker ID|NAME   style ID, speaker name or alias (zunda); NAME:STYLE selects a style\n"
+        << "  --teacher ID|NAME   query style for sing; default 6000\n"
+        << "  --speakers VALUES   comma-separated IDs/names for bench/bench-http\n"
         << "  --text TEXT         Japanese text\n"
         << "  --add-text TEXT     add another text for bench/bench-http\n"
         << "  --kana              treat --text as AquesTalk-style kana\n"
@@ -135,25 +136,17 @@ static void applyStateDirectory(CliOptions &cliOptions, const fs::path &stateDir
     cliOptions.runtimePaths.libraryDirectory = stateDirectory / "core_libraries";
 }
 
-static uint32_t ParseStyle(const std::string &Text) {
-    uint32_t Value = 0;
-    auto Result = std::from_chars(Text.data(), Text.data() + Text.size(), Value);
-    if (Result.ec != std::errc() || Result.ptr != Text.data() + Text.size()) {
-        throw std::runtime_error("style ID が不正です: " + Text);
-    }
-    return Value;
-}
-
-static std::vector<uint32_t> parseSpeakerList(const std::string &speakerListText) {
-    std::vector<uint32_t> speakerIds;
+static std::vector<std::string> parseSpeakerList(const std::string &speakerListText) {
+    std::vector<std::string> speakerIds;
     std::stringstream speakerStream(speakerListText);
     std::string speakerToken;
     while (std::getline(speakerStream, speakerToken, ',')) {
         if (speakerToken.empty()) {
             throw std::runtime_error("--speakers に空の要素があります");
         }
-        speakerIds.push_back(ParseStyle(speakerToken));
+        speakerIds.push_back(speakerToken);
     }
+    if (!speakerListText.empty() && speakerListText.back() == ',') throw std::invalid_argument("--speakers に空の要素があります");
     if (speakerIds.empty()) {
         throw std::runtime_error("--speakers が空です");
     }
@@ -641,6 +634,9 @@ static CliOptions parseCliOptions(int argc, char **argv) {
             cliOptions.runtimePaths.coreProfile = requireValue(argumentText);
         } else if (argumentText == "--acceleration-mode") {
             cliOptions.runtimePaths.accelerationMode = requireValue(argumentText);
+        } else if (argumentText == "--execution-provider") {
+            cliOptions.ExecutionProvider = requireValue(argumentText);
+            if (cliOptions.ExecutionProvider.empty()) throw std::invalid_argument("--execution-provider が空です");
         } else if (argumentText == "--gpu") {
             cliOptions.runtimePaths.accelerationMode = "gpu";
         } else if (argumentText == "--cpu-threads") {
@@ -677,13 +673,13 @@ static CliOptions parseCliOptions(int argc, char **argv) {
             if (cliOptions.commandMode != CommandMode::Sing) {
                 throw std::runtime_error("--teacher は sing 専用です");
             }
-            cliOptions.Teacher = ParseStyle(requireValue(argumentText));
+            cliOptions.TeacherName = requireValue(argumentText);
+            if (cliOptions.TeacherName.empty()) throw std::invalid_argument("--teacher が空です");
         } else if (argumentText == "--speaker") {
-            cliOptions.speaker = ParseStyle(requireValue(argumentText));
-            cliOptions.benchSpeakers.clear();
+            cliOptions.SpeakerNames = {requireValue(argumentText)};
+            if (cliOptions.SpeakerNames.front().empty()) throw std::invalid_argument("--speaker が空です");
         } else if (argumentText == "--speakers") {
-            cliOptions.benchSpeakers = parseSpeakerList(requireValue(argumentText));
-            cliOptions.speaker = cliOptions.benchSpeakers.front();
+            cliOptions.SpeakerNames = parseSpeakerList(requireValue(argumentText));
         } else if (argumentText == "--runs") {
             cliOptions.runs = static_cast<size_t>(std::stoul(requireValue(argumentText)));
             if (cliOptions.runs == 0) {
@@ -748,7 +744,6 @@ static CliOptions parseCliOptions(int argc, char **argv) {
             throw std::runtime_error("不明な引数です: " + argumentText);
         }
     }
-    resolveAutoDiscoveredOnnxruntimePath(cliOptions);
     return cliOptions;
 }
 

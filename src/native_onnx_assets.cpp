@@ -57,6 +57,15 @@ static std::string createNativeOnnxModelAssetSessionCacheKey(NativeOnnxApi &nati
     return keyStream.str();
 }
 
+static std::vector<NativeOnnxTraceInput> RunVvBin(NativeOnnxApi &Api, const NativeOnnxRuntimeState *State, const ModelAssetRecord &Asset, const std::vector<NativeOnnxTraceInput> &Inputs, uint16_t Threads, const std::vector<uint8_t> *Bytes = nullptr) {
+    auto Session = CacheSession(createNativeOnnxModelAssetSessionCacheKey(Api, State, Asset, Threads, true), [&] {
+        // バイト列はセッション作成時だけ必要。キャッシュヒット時の展開・コピーを避ける。
+        if (Bytes) return createNativeOnnxCachedSession(Api, State, *Bytes, Threads, true);
+        return createNativeOnnxCachedSession(Api, State, extractNativeOnnxModelAssetBytes(Asset), Threads, true);
+    });
+    return runNativeOnnxPreparedSession(Api, Session, Inputs);
+}
+
 static fs::path getNativeOnnxVvBinExportLibraryPath(NativeOnnxApi &nativeOnnxApi) {
     const char *libraryPathText = std::getenv("LITEVOX_VV_BIN_ONNXRUNTIME");
     if (!libraryPathText || libraryPathText[0] == '\0') {
@@ -161,15 +170,7 @@ static std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetViaExportLibrary
     fs::path exportLibraryPath = getNativeOnnxVvBinExportLibraryPath(nativeOnnxApi);
     NativeOnnxApi exportOnnxApi = loadNativeOnnxApi(exportLibraryPath);
     try {
-        std::vector<uint8_t> fallbackModelBytes = modelBytes ? *modelBytes : extractNativeOnnxModelAssetBytes(modelAsset);
-        std::vector<NativeOnnxTraceInput> outputTensors = runNativeOnnxModelBytes(
-            exportOnnxApi,
-            nullptr,
-            fallbackModelBytes,
-            inputTensors,
-            cpuThreadCount,
-            true,
-            createNativeOnnxModelAssetSessionCacheKey(exportOnnxApi, nullptr, modelAsset, cpuThreadCount, true));
+        auto outputTensors = RunVvBin(exportOnnxApi, nullptr, modelAsset, inputTensors, cpuThreadCount, modelBytes);
         closeNativeOnnxApi(exportOnnxApi);
         return outputTensors;
     } catch (...) {
@@ -368,6 +369,7 @@ static fs::path getNativeOnnxDeterministicSingTeacherModelPath(NativeOnnxApi &na
 static std::vector<NativeOnnxTraceInput> runNativeOnnxDeterministicSingTeacherModelAssetBytes(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const ModelAssetRecord &modelAsset, const std::vector<NativeOnnxTraceInput> &inputTensors, uint16_t cpuThreadCount) {
     float seedValue = getNativeOnnxDeterministicSingTeacherSeed();
     fs::path seededModelPath = getNativeOnnxDeterministicSingTeacherModelPath(nativeOnnxApi, runtimeState, modelAsset, cpuThreadCount, seedValue);
+    // RandomNormal の乱数状態は Run ごとに進む。固定 seed の再現性を保つためセッションは再利用しない。
     std::vector<NativeOnnxTraceInput> outputTensors = runNativeOnnxModelPath(nativeOnnxApi, runtimeState, seededModelPath, inputTensors, cpuThreadCount, false);
     writeNativeOnnxTensorTrace(modelAsset, inputTensors, outputTensors);
     return outputTensors;
@@ -390,15 +392,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxSingTeacherModelAssetBytes(Native
     }
     std::vector<NativeOnnxTraceInput> outputTensors;
     if (shouldUseVvBinConfig) {
-        std::vector<uint8_t> modelBytes = extractNativeOnnxModelAssetBytes(modelAsset);
-        outputTensors = runNativeOnnxModelBytes(
-            nativeOnnxApi,
-            runtimeState,
-            modelBytes,
-            inputTensors,
-            cpuThreadCount,
-            true,
-            createNativeOnnxModelAssetSessionCacheKey(nativeOnnxApi, runtimeState, modelAsset, cpuThreadCount, true));
+        outputTensors = RunVvBin(nativeOnnxApi, runtimeState, modelAsset, inputTensors, cpuThreadCount);
     } else {
         try {
             fs::path exportedModelPath = getNativeOnnxExportedModelCachePath(nativeOnnxApi, modelAsset, cpuThreadCount);
@@ -425,15 +419,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &na
     NativeOnnxRuntimeState Cpu;
     runtimeState = SelectModel(runtimeState, modelAsset, Cpu);
     if (shouldUseVvBinConfig) {
-        std::vector<uint8_t> modelBytes = extractNativeOnnxModelAssetBytes(modelAsset);
-        std::vector<NativeOnnxTraceInput> outputTensors = runNativeOnnxModelBytes(
-            nativeOnnxApi,
-            runtimeState,
-            modelBytes,
-            inputTensors,
-            cpuThreadCount,
-            true,
-            createNativeOnnxModelAssetSessionCacheKey(nativeOnnxApi, runtimeState, modelAsset, cpuThreadCount, true));
+        auto outputTensors = RunVvBin(nativeOnnxApi, runtimeState, modelAsset, inputTensors, cpuThreadCount);
         writeNativeOnnxTensorTrace(modelAsset, inputTensors, outputTensors);
         return outputTensors;
     }
@@ -463,7 +449,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &na
     runtimeState = SelectModel(runtimeState, modelAsset, Cpu);
     std::vector<NativeOnnxTraceInput> outputTensors;
     if (shouldUseVvBinConfig) {
-        outputTensors = runNativeOnnxModelBytes(nativeOnnxApi, runtimeState, modelBytes, inputTensors, cpuThreadCount, true, createNativeOnnxModelAssetSessionCacheKey(nativeOnnxApi, runtimeState, modelAsset, cpuThreadCount, true));
+        outputTensors = RunVvBin(nativeOnnxApi, runtimeState, modelAsset, inputTensors, cpuThreadCount, &modelBytes);
     } else {
         try {
             fs::path exportedModelPath = getNativeOnnxExportedModelCachePath(nativeOnnxApi, modelAsset, cpuThreadCount);

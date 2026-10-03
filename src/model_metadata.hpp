@@ -17,6 +17,8 @@ struct StyleRecord {
 std::vector<StyleRecord> extractStylesFromMetasJson(const std::string &metasJson);
 std::vector<StyleRecord> extractOrderedStylesFromMetasJson(const std::string &metasJson);
 std::vector<uint32_t> extractStyleIds(const std::vector<StyleRecord> &styleRecords);
+const std::map<std::string, std::string> &GetAliases();
+uint32_t ResolveStyle(const std::string &Text, const std::vector<StyleRecord> &Styles, const std::string &Type = "talk");
 std::string createCombinedMetasJson(const std::vector<std::string> &metasJsonTexts);
 std::string createSpeakersJson(const std::string &metasJson, bool supportsMorphing = true);
 std::string createSpeakersJson(const std::string &metasJson, bool supportsMorphing, const std::map<std::string, std::string> &speakerSupportedFeaturesJsons);

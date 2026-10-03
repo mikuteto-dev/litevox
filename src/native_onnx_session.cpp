@@ -364,7 +364,7 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
     }
 }
 
-std::shared_ptr<NativeOnnxCachedSession> getNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const std::vector<uint8_t> &modelBytes, uint16_t cpuThreadCount, bool shouldUseVvBinConfig, const std::string &sessionCacheKey) {
+std::shared_ptr<NativeOnnxCachedSession> CacheSession(const std::string &sessionCacheKey, const std::function<std::shared_ptr<NativeOnnxCachedSession>()> &Create) {
     {
         std::unique_lock<std::mutex> cacheLock(nativeOnnxSessionCacheMutex);
         while (true) {
@@ -381,7 +381,7 @@ std::shared_ptr<NativeOnnxCachedSession> getNativeOnnxCachedSession(NativeOnnxAp
         }
     }
     try {
-        std::shared_ptr<NativeOnnxCachedSession> cachedSession = createNativeOnnxCachedSession(nativeOnnxApi, runtimeState, modelBytes, cpuThreadCount, shouldUseVvBinConfig);
+        std::shared_ptr<NativeOnnxCachedSession> cachedSession = Create();
         std::lock_guard<std::mutex> cacheLock(nativeOnnxSessionCacheMutex);
         nativeOnnxSessionCache[sessionCacheKey] = cachedSession;
         nativeOnnxSessionKeysInProgress.erase(sessionCacheKey);
@@ -395,35 +395,12 @@ std::shared_ptr<NativeOnnxCachedSession> getNativeOnnxCachedSession(NativeOnnxAp
     }
 }
 
+std::shared_ptr<NativeOnnxCachedSession> getNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const std::vector<uint8_t> &modelBytes, uint16_t cpuThreadCount, bool shouldUseVvBinConfig, const std::string &sessionCacheKey) {
+    return CacheSession(sessionCacheKey, [&] { return createNativeOnnxCachedSession(nativeOnnxApi, runtimeState, modelBytes, cpuThreadCount, shouldUseVvBinConfig); });
+}
+
 std::shared_ptr<NativeOnnxCachedSession> getNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const fs::path &modelPath, uint16_t cpuThreadCount, bool shouldUseVvBinConfig, const std::string &sessionCacheKey) {
-    {
-        std::unique_lock<std::mutex> cacheLock(nativeOnnxSessionCacheMutex);
-        while (true) {
-            auto cacheIterator = nativeOnnxSessionCache.find(sessionCacheKey);
-            if (cacheIterator != nativeOnnxSessionCache.end()) {
-                nativeOnnxSessionCacheHits++;
-                return cacheIterator->second;
-            }
-            if (nativeOnnxSessionKeysInProgress.insert(sessionCacheKey).second) {
-                nativeOnnxSessionCacheMisses++;
-                break;
-            }
-            nativeOnnxSessionCacheCondition.wait(cacheLock);
-        }
-    }
-    try {
-        std::shared_ptr<NativeOnnxCachedSession> cachedSession = createNativeOnnxCachedSession(nativeOnnxApi, runtimeState, modelPath, cpuThreadCount, shouldUseVvBinConfig);
-        std::lock_guard<std::mutex> cacheLock(nativeOnnxSessionCacheMutex);
-        nativeOnnxSessionCache[sessionCacheKey] = cachedSession;
-        nativeOnnxSessionKeysInProgress.erase(sessionCacheKey);
-        nativeOnnxSessionCacheCondition.notify_all();
-        return cachedSession;
-    } catch (...) {
-        std::lock_guard<std::mutex> cacheLock(nativeOnnxSessionCacheMutex);
-        nativeOnnxSessionKeysInProgress.erase(sessionCacheKey);
-        nativeOnnxSessionCacheCondition.notify_all();
-        throw;
-    }
+    return CacheSession(sessionCacheKey, [&] { return createNativeOnnxCachedSession(nativeOnnxApi, runtimeState, modelPath, cpuThreadCount, shouldUseVvBinConfig); });
 }
 
 std::vector<NativeOnnxTraceInput> runNativeOnnxPreparedSession(NativeOnnxApi &nativeOnnxApi, const std::shared_ptr<NativeOnnxCachedSession> &cachedSession, const std::vector<NativeOnnxTraceInput> &inputTensors) {

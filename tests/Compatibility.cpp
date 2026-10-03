@@ -1,11 +1,15 @@
 #include "json_utility.hpp"
+#include "model_metadata.hpp"
 #include "native_onnx_internal.hpp"
 
 #include <cassert>
+#include <atomic>
+#include <thread>
 #include <functional>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <set>
 
 static void Reject(const std::function<void()> &Run) {
     bool Failed = false;
@@ -13,7 +17,94 @@ static void Reject(const std::function<void()> &Run) {
     assert(Failed);
 }
 
-int main() {
+int main(int Argc, char **Argv) {
+    if (Argc > 1 && Argv[1][0] != '\0') {
+        std::vector<StyleRecord> All;
+        for (const auto &Path : collectVvmModelFiles({Argv[1]})) {
+            auto Entries = extractStylesFromMetasJson(inspectVvmArchive(Path).metasJson);
+            All.insert(All.end(), Entries.begin(), Entries.end());
+        }
+        assert(!All.empty());
+        std::set<std::string> Speakers, Aliased;
+        std::map<std::string, size_t> Counts;
+        for (const auto &Entry : All) {
+            Speakers.insert(Entry.speakerName);
+            ++Counts[Entry.styleType];
+            assert(ResolveStyle(Entry.speakerName + ":" + Entry.styleName, All, Entry.styleType) == Entry.styleId);
+            assert(ResolveStyle(std::to_string(Entry.styleId), All, Entry.styleType) == Entry.styleId);
+        }
+        for (const auto &Alias : GetAliases()) {
+            bool HasSpeaker = false;
+            for (const auto &Entry : All) {
+                if (Entry.speakerName != Alias.second) continue;
+                HasSpeaker = true;
+                Aliased.insert(Entry.speakerName);
+                assert(ResolveStyle(Alias.first + ":" + Entry.styleName, All, Entry.styleType) == Entry.styleId);
+                std::string Type = Entry.styleType == "sing" ? "frame_decode" : Entry.styleType;
+                assert(ResolveStyle(Alias.first + ":" + std::to_string(Entry.styleId), All, Type) == Entry.styleId);
+            }
+            assert(HasSpeaker);
+        }
+        assert(Aliased == Speakers);
+        std::cout << Speakers.size() << " standard speakers / " << All.size() << " styles / all aliases checked";
+        for (const auto &Count : Counts) std::cout << " / " << Count.first << ": " << Count.second;
+        std::cout << "\n";
+    }
+    const std::vector<StyleRecord> Styles{
+        {1, "z", "ずんだもん", "あまあま", "talk"}, {3, "z", "ずんだもん", "ノーマル", "talk"},
+        {3003, "z", "ずんだもん", "ノーマル", "frame_decode"},
+        {6000, "r", "波音リツ", "ノーマル", "sing"}, {12, "k", "白上虎太郎", "ふつう", "talk"}
+    };
+    for (const char *Name : {"3", "zunda", "ZUNDAMON", "ずんだもん", "zunda:normal"}) assert(ResolveStyle(Name, Styles) == 3);
+    assert(ResolveStyle("zunda:あまあま", Styles) == 1);
+    assert(ResolveStyle("zunda", Styles, "frame_decode") == 3003);
+    assert(ResolveStyle("ritsu", Styles, "sing") == 6000);
+    assert(ResolveStyle("ritsu:6000", Styles, "frame_decode") == 6000);
+    assert(ResolveStyle("zunda:7", {{7, "z", "ずんだもん", "ツンツン", "talk"}}) == 7);
+    Reject([&] { ResolveStyle("zunda:6000", Styles, "frame_decode"); });
+    Reject([&] { ResolveStyle("ritsu:6000", Styles, "talk"); });
+    assert(ResolveStyle("kotaro", Styles) == 12);
+    assert(ResolveStyle("kotaro:normal", Styles) == 12);
+    assert(ResolveStyle("ENGLISH:normal", {{9, "e", "English", "Normal", "talk"}}) == 9);
+    assert(ResolveStyle("WHITECUL", {{23, "w", "WhiteCUL", "ノーマル", "talk"}}) == 23);
+    assert(ResolveStyle("no7", {{29, "n", "No.7", "ノーマル", "talk"}}) == 29);
+    assert(ResolveStyle("4294967295", {}) == 4294967295u);
+    for (const char *Name : {"", "-1", "+3", "3x", "4294967296", "missing", "zunda:", ":normal", "zunda:nope"}) Reject([&] { ResolveStyle(Name, Styles); });
+    Reject([&] { ResolveStyle("zunda", Styles, "sing"); });
+    Reject([&] { ResolveStyle("ずんだもん", {{1, "z", "ずんだもん", "A", "talk"}, {2, "z", "ずんだもん", "B", "talk"}}); });
+    std::atomic_size_t Creates{0};
+    std::vector<std::thread> Threads;
+    std::vector<std::shared_ptr<NativeOnnxCachedSession>> Sessions(8);
+    for (size_t Index = 0; Index < Sessions.size(); ++Index) Threads.emplace_back([&, Index] {
+        Sessions[Index] = CacheSession("lazy-test", [&] { ++Creates; return std::make_shared<NativeOnnxCachedSession>(); });
+    });
+    for (auto &Thread : Threads) Thread.join();
+    assert(Creates == 1);
+    for (auto &Session : Sessions) assert(Session == Sessions.front());
+    Reject([] { CacheSession("retry-test", []() -> std::shared_ptr<NativeOnnxCachedSession> { throw std::invalid_argument("load failed"); }); });
+    assert(CacheSession("retry-test", [] { return std::make_shared<NativeOnnxCachedSession>(); }));
+    clearNativeOnnxCaches();
+    std::vector<float> F0(500), Phonemes(500 * nativeOnnxPhonemeSize);
+    for (size_t Index = 0; Index < F0.size(); ++Index) F0[Index] = static_cast<float>(Index);
+    for (size_t Index = 0; Index < Phonemes.size(); ++Index) Phonemes[Index] = static_cast<float>(Index);
+    std::vector<NativeOnnxTraceInput> Inputs{
+        createNativeOnnxFloatTensor("f0", {500, 1}, F0),
+        createNativeOnnxFloatTensor("phoneme", {500, nativeOnnxPhonemeSize}, Phonemes),
+        createNativeOnnxInt64Tensor("speaker_id", {1}, {0})
+    };
+    auto Chunk = createNativeOnnxDecoderChunkInputs(Inputs, 256, 424, 128);
+    assert(Chunk.frontCropFrames == 166 && Chunk.backCropFrames == 38);
+    assert(Chunk.tensors[0].dimensions == std::vector<int64_t>({372, 1}));
+    assert(readNativeOnnxTensorValues<float>(Chunk.tensors[0], 1) == std::vector<float>(F0.begin() + 128, F0.end()));
+    assert(readNativeOnnxTensorValues<float>(Chunk.tensors[1], 1) == std::vector<float>(Phonemes.begin() + 128 * nativeOnnxPhonemeSize, Phonemes.end()));
+    assert(Chunk.tensors[2].bytes == Inputs[2].bytes);
+    assert(createNativeOnnxDecoderChunkInputs(Inputs, 0, 128, std::numeric_limits<size_t>::max()).tensors[0].bytes == Inputs[0].bytes);
+    Reject([&] { createNativeOnnxDecoderChunkInputs(Inputs, 256, 425, 128); });
+    Inputs[0].dimensions[0] = 499;
+    Reject([&] { createNativeOnnxDecoderChunkInputs(Inputs, 0, 128, 128); });
+    Inputs[0].dimensions[0] = 500;
+    Inputs[1].bytes.pop_back();
+    Reject([&] { createNativeOnnxDecoderChunkInputs(Inputs, 0, 128, 128); });
     assert(decodeJsonString(R"("\u30c9\u30ec\u30df")", 0) == "ドレミ");
     assert(decodeJsonString(R"("\ud83c\udfb5")", 0) == "🎵");
     assert(decodeJsonString(R"("\"\\\/\b\f\n\r\t")", 0) == "\"\\/\b\f\n\r\t");

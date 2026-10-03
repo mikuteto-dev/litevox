@@ -13,3 +13,4 @@ int runSongBenchCommand(const CliOptions &cliOptions);
 int runHttpSongBenchCommand(const CliOptions &cliOptions);
 int runHttpBenchCommand(const CliOptions &cliOptions);
 int runApiSessionCommand(const CliOptions &cliOptions);
+std::string FetchSpeakers(const CliOptions &Options, const std::string &Type);

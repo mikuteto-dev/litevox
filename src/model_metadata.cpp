@@ -1,6 +1,10 @@
 #include "model_metadata.hpp"
 
 #include "json_utility.hpp"
+#include "utility.hpp"
+
+#include <charconv>
+#include <stdexcept>
 
 #include <algorithm>
 #include <cctype>
@@ -165,6 +169,67 @@ std::vector<uint32_t> extractStyleIds(const std::vector<StyleRecord> &styleRecor
         uniqueStyleIds.insert(styleRecord.styleId);
     }
     return std::vector<uint32_t>(uniqueStyleIds.begin(), uniqueStyleIds.end());
+}
+
+const std::map<std::string, std::string> &GetAliases() {
+    static const std::map<std::string, std::string> Aliases{
+        {"zunda", "ずんだもん"}, {"zundamon", "ずんだもん"}, {"metan", "四国めたん"},
+        {"tsumugi", "春日部つむぎ"}, {"hau", "雨晴はう"}, {"ritsu", "波音リツ"},
+        {"takehiro", "玄野武宏"}, {"kotaro", "白上虎太郎"}, {"ryusei", "青山龍星"},
+        {"himari", "冥鳴ひまり"}, {"sora", "九州そら"}, {"mochiko", "もち子さん"},
+        {"chibi", "ちび式じい"}, {"miko", "櫻歌ミコ"}, {"nurse-t", "ナースロボ＿タイプＴ"},
+        {"benizakura", "†聖騎士 紅桜†"}, {"akashi", "雀松朱司"}, {"sorin", "麒ヶ島宗麟"},
+        {"nana", "春歌ナナ"}, {"aru", "猫使アル"}, {"bii", "猫使ビィ"}, {"maron", "栗田まろん"},
+        {"aierutan", "あいえるたん"}, {"hanamaru", "満別花丸"}, {"nia", "琴詠ニア"},
+        {"sayo", "小夜/SAYO"}, {"goki", "後鬼"}, {"voidoll", "Voidoll"}, {"zonko", "ぞん子"},
+        {"tsurugi", "中部つるぎ"}, {"rito", "離途"}, {"kurosawa", "黒沢冴白"},
+        {"yurei", "ユーレイちゃん"}, {"zunko", "東北ずん子"}, {"kiritan", "東北きりたん"},
+        {"itako", "東北イタコ"}, {"ankomon", "あんこもん"}, {"tobari", "夜語トバリ"},
+        {"mitama", "暁記ミタマ"}, {"yuka", "里石ユカ"}, {"usagi", "中国うさぎ"},
+        {"mesuo", "剣崎雌雄"}, {"no7", "No.7"}, {"whitecul", "WhiteCUL"}
+    };
+    return Aliases;
+}
+
+uint32_t ResolveStyle(const std::string &Text, const std::vector<StyleRecord> &Styles, const std::string &Type) {
+    if (Text.empty()) throw std::invalid_argument("話者指定が空です");
+    if (Text[0] == '-' || Text[0] == '+' || (Text[0] >= '0' && Text[0] <= '9')) {
+        uint32_t Id = 0;
+        auto Result = std::from_chars(Text.data(), Text.data() + Text.size(), Id);
+        if (Result.ec != std::errc() || Result.ptr != Text.data() + Text.size()) {
+            throw std::invalid_argument("style ID が不正です: " + Text);
+        }
+        return Id;
+    }
+    size_t Separator = Text.find(':');
+    std::string Name = lowercaseAscii(Text.substr(0, Separator));
+    std::string Style = Separator == std::string::npos ? "" : lowercaseAscii(Text.substr(Separator + 1));
+    if (Name.empty() || (Separator != std::string::npos && Style.empty())) {
+        throw std::invalid_argument("話者指定は NAME または NAME:STYLE です: " + Text);
+    }
+    const auto &Aliases = GetAliases();
+    auto Alias = Aliases.find(Name);
+    if (Alias != Aliases.end()) Name = lowercaseAscii(Alias->second);
+    std::map<uint32_t, const StyleRecord *> Matches, Defaults;
+    for (const auto &Entry : Styles) {
+        bool IsStyleId = Style == std::to_string(Entry.styleId);
+        bool IsSong = Type == "frame_decode" && Entry.styleType == "sing" && IsStyleId;
+        if ((Entry.styleType != Type && !IsSong) || lowercaseAscii(Entry.speakerName) != Name) continue;
+        std::string StyleName = lowercaseAscii(Entry.styleName);
+        bool IsDefault = StyleName == "ノーマル" || StyleName == "ふつう" || StyleName == "normal";
+        if (!Style.empty() && !IsStyleId && StyleName != Style && !(Style == "normal" && IsDefault)) continue;
+        Matches.emplace(Entry.styleId, &Entry);
+        if (IsDefault) Defaults.emplace(Entry.styleId, &Entry);
+    }
+    if (Matches.empty()) throw std::invalid_argument("話者が見つかりません (" + Type + "): " + Text + "。models / singers で確認してください");
+    if (Style.empty() && Defaults.size() == 1) return Defaults.begin()->first;
+    if (Matches.size() == 1) return Matches.begin()->first;
+    std::string Choices;
+    for (const auto &Match : Matches) {
+        if (!Choices.empty()) Choices += ", ";
+        Choices += Match.second->speakerName + ":" + Match.second->styleName + "=" + std::to_string(Match.first);
+    }
+    throw std::invalid_argument("話者指定が曖昧です: " + Text + "。スタイルを指定してください: " + Choices);
 }
 
 std::string createCombinedMetasJson(const std::vector<std::string> &metasJsonTexts) {

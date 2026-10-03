@@ -739,3 +739,10 @@ struct ApiSessionLineSpec {
 
 #include "cli_bench_http.hpp"
 #include "cli_bench_api_session.hpp"
+
+std::string FetchSpeakers(const CliOptions &Options, const std::string &Type) {
+    const char *Path = Type == "talk" ? "/speakers" : "/singers";
+    auto Response = requestHttpBenchTarget(Options, Path);
+    if (Response.statusCode != 200) throw std::runtime_error(std::string("話者一覧を取得できません: ") + Path + " HTTP " + std::to_string(Response.statusCode));
+    return std::string(Response.bodyBytesData.begin(), Response.bodyBytesData.end());
+}
