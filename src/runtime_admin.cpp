@@ -125,7 +125,7 @@ std::string createSettingPageHtml(RuntimeState &runtimeState) {
     if (runtimeState.sharedSettingMutex) {
         settingLock = std::unique_lock<std::mutex>(*runtimeState.sharedSettingMutex);
     }
-    std::string brandName = extractJsonStringField(runtimeState.manifestJson, "brand_name");
+    std::string brandName = extractJsonStringField(getRuntimeManifestJson(runtimeState), "brand_name");
     if (brandName.empty()) {
         brandName = "VOICEVOX";
     }

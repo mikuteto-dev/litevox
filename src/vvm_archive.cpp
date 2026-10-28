@@ -52,13 +52,17 @@ static uint64_t readArchiveSize(const fs::path &archivePath) {
     return static_cast<uint64_t>(fileSize);
 }
 
-static std::vector<uint8_t> readArchiveBytesAt(const fs::path &archivePath, uint64_t offset, uint64_t byteCount) {
-    if (byteCount > std::numeric_limits<size_t>::max()) {
-        throw std::runtime_error("VVM 読み込みサイズが大きすぎます: " + archivePath.string());
-    }
+static std::ifstream openArchive(const fs::path &archivePath) {
     std::ifstream inputStream(archivePath, std::ios::binary);
     if (!inputStream) {
         throw std::runtime_error("VVM を読めません: " + archivePath.string());
+    }
+    return inputStream;
+}
+
+static std::vector<uint8_t> readArchiveBytesAt(std::ifstream &inputStream, const fs::path &archivePath, uint64_t offset, uint64_t byteCount) {
+    if (byteCount > std::numeric_limits<size_t>::max()) {
+        throw std::runtime_error("VVM 読み込みサイズが大きすぎます: " + archivePath.string());
     }
     inputStream.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
     if (!inputStream) {
@@ -72,6 +76,11 @@ static std::vector<uint8_t> readArchiveBytesAt(const fs::path &archivePath, uint
         }
     }
     return archiveBytes;
+}
+
+static std::vector<uint8_t> readArchiveBytesAt(const fs::path &archivePath, uint64_t offset, uint64_t byteCount) {
+    std::ifstream inputStream = openArchive(archivePath);
+    return readArchiveBytesAt(inputStream, archivePath, offset, byteCount);
 }
 
 static EndOfCentralDirectoryRecord readEndOfCentralDirectory(const fs::path &archivePath, uint64_t archiveSize) {
@@ -109,12 +118,12 @@ static bool hasSuffix(const std::string &text, const std::string &suffixText) {
     return text.size() >= suffixText.size() && text.compare(text.size() - suffixText.size(), suffixText.size(), suffixText) == 0;
 }
 
-static uint64_t readArchiveEntryDataOffset(const fs::path &archivePath, uint64_t archiveSize, const VvmEntryRecord &archiveEntry) {
+static uint64_t readArchiveEntryDataOffset(std::ifstream &inputStream, const fs::path &archivePath, uint64_t archiveSize, const VvmEntryRecord &archiveEntry) {
     const uint32_t localHeaderSignature = 0x04034b50;
     if (archiveEntry.localHeaderOffset + 30 > archiveSize) {
         throw std::runtime_error("ZIP local header が壊れています: " + archiveEntry.name);
     }
-    std::vector<uint8_t> localHeaderBytes = readArchiveBytesAt(archivePath, archiveEntry.localHeaderOffset, 30);
+    std::vector<uint8_t> localHeaderBytes = readArchiveBytesAt(inputStream, archivePath, archiveEntry.localHeaderOffset, 30);
     if (readLittleUint32(localHeaderBytes, 0) != localHeaderSignature) {
         throw std::runtime_error("ZIP local header が壊れています: " + archiveEntry.name);
     }
@@ -139,7 +148,8 @@ static std::vector<VvmEntryRecord> readCentralDirectory(const fs::path &archiveP
     if (static_cast<uint64_t>(endRecord.directoryOffset) + endRecord.directorySize > archiveSize) {
         throw std::runtime_error("ZIP central directory が壊れています");
     }
-    std::vector<uint8_t> directoryBytes = readArchiveBytesAt(archivePath, endRecord.directoryOffset, endRecord.directorySize);
+    std::ifstream inputStream = openArchive(archivePath);
+    std::vector<uint8_t> directoryBytes = readArchiveBytesAt(inputStream, archivePath, endRecord.directoryOffset, endRecord.directorySize);
     std::vector<VvmEntryRecord> entries;
     entries.reserve(endRecord.entryCount);
     size_t position = 0;
@@ -167,7 +177,7 @@ static std::vector<VvmEntryRecord> readCentralDirectory(const fs::path &archiveP
         if (archiveEntry.compressedSize == 0xffffffff || archiveEntry.uncompressedSize == 0xffffffff || archiveEntry.localHeaderOffset == 0xffffffff) {
             throw std::runtime_error("ZIP64 VVM entry は未対応です: " + archiveEntry.name);
         }
-        archiveEntry.dataOffset = readArchiveEntryDataOffset(archivePath, archiveSize, archiveEntry);
+        archiveEntry.dataOffset = readArchiveEntryDataOffset(inputStream, archivePath, archiveSize, archiveEntry);
         entries.push_back(std::move(archiveEntry));
         position = nextPosition;
     }
@@ -206,10 +216,11 @@ static std::vector<uint8_t> inflateEntryBytes(const std::vector<uint8_t> &compre
 }
 
 static std::vector<uint8_t> extractArchiveEntryBytes(const fs::path &archivePath, uint64_t archiveSize, const VvmEntryRecord &archiveEntry) {
+    std::ifstream inputStream = openArchive(archivePath);
     uint64_t bodyPosition = archiveEntry.dataOffset == 0
-        ? readArchiveEntryDataOffset(archivePath, archiveSize, archiveEntry)
+        ? readArchiveEntryDataOffset(inputStream, archivePath, archiveSize, archiveEntry)
         : archiveEntry.dataOffset;
-    std::vector<uint8_t> compressedBytes = readArchiveBytesAt(archivePath, bodyPosition, archiveEntry.compressedSize);
+    std::vector<uint8_t> compressedBytes = readArchiveBytesAt(inputStream, archivePath, bodyPosition, archiveEntry.compressedSize);
     if (archiveEntry.compressionMethod == 0) {
         if (archiveEntry.compressedSize != archiveEntry.uncompressedSize) {
             throw std::runtime_error("stored entry サイズが一致しません: " + archiveEntry.name);

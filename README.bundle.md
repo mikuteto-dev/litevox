@@ -43,7 +43,7 @@ shasum -a 256 -c SHA256SUMS
 
 ### 方法 1: 公式 zip を直接指定して実行する
 
-VOICEVOX 製品 zip をそのまま `--runtime` に指定して実行できます。初回実行時に zip と同じディレクトリに自動展開キャッシュ（`.litevox-runtime-cache/`）が作成され、次回以降は高速に起動します。
+VOICEVOX 製品 zip をそのまま `--runtime` に指定して実行できます。初回実行時に zip と同じディレクトリに自動展開キャッシュ（`.litevox-runtime-cache/`）が作成され、次回以降は高速に起動します。各モデルの初回使用時には復号した ONNX モデルと `.ort` モデルを `model-vvm/.litevox-exported-onnx-cache/` に書き出します（`--native-model-mode vv-bin` で無効）。
 
 ```sh
 # ランタイム情報の確認

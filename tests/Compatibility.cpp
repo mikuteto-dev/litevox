@@ -189,7 +189,8 @@ int main(int Argc, char **Argv) {
     assert(IsRejected);
     Api.appendExecutionProvider = [](OrtSessionOptions *, const char *Name, const char *const *Keys, const char *const *Values, size_t Count) -> OrtStatus * {
         if (std::string(Name) == "WebGPU") {
-            assert(Count == 1 && std::string(Keys[0]) == "powerPreference" && std::string(Values[0]) == "high-performance");
+            assert(Count == 2 && std::string(Keys[0]) == "powerPreference" && std::string(Values[0]) == "high-performance");
+            assert(std::string(Keys[1]) == "storageBufferCacheMode" && std::string(Values[1]) == "simple");
         } else {
             assert(std::string(Name) == "CoreML" && Count >= 2);
             assert(std::string(Keys[0]) == "ModelFormat" && std::string(Values[0]) == "MLProgram");

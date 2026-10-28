@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -69,7 +70,7 @@ struct RuntimeState {
     std::filesystem::path engineManifestAssetDirectory;
     std::vector<VoiceModelRecord> voiceModels;
     std::vector<ModelAssetRecord> modelAssets;
-    CharacterResourceManager characterResources;
+    mutable std::optional<CharacterResourceManager> characterResources;
     ModelSessionCache modelSessionCache;
     std::map<uint32_t, size_t> styleToModelIndex;
     std::map<uint32_t, size_t> *sharedLoadedStyleCounts = nullptr;
@@ -82,7 +83,7 @@ struct RuntimeState {
     std::mutex *sharedSettingMutex = nullptr;
     std::mutex *sharedLibraryMutex = nullptr;
     std::string combinedMetasJson;
-    std::string manifestJson;
+    std::optional<std::string> manifestJson;
     std::string libraryStateSignature;
     std::unique_ptr<RuntimeState> segmentedTextPrefetchRuntime;
     bool enableCancellableSynthesis = false;
@@ -111,6 +112,8 @@ struct RuntimeRequestQueueMetrics {
 
 RuntimePaths makeDefaultRuntimePaths(const std::filesystem::path &rootDirectory);
 RuntimeState createRuntimeState(const RuntimePaths &runtimePaths, bool shouldPreload);
+const CharacterResourceManager &getCharacterResources(const RuntimeState &runtimeState);
+const std::string &getRuntimeManifestJson(RuntimeState &runtimeState);
 void destroyRuntimeState(RuntimeState &runtimeState);
 std::string getRuntimeCoreVersion(RuntimeState &runtimeState);
 void loadAllVoiceModels(RuntimeState &runtimeState);

@@ -1,6 +1,6 @@
 CXX ?= clang++
-CXXFLAGS ?= -std=c++17 -O3 -DNDEBUG -Wall -Wextra -Wpedantic
-LDFLAGS ?=
+CXXFLAGS ?= -std=c++17 -Os -flto -DNDEBUG -Wall -Wextra -Wpedantic
+LDFLAGS ?= -flto
 LDLIBS ?= -lz
 SOXR_CFLAGS ?= $(shell pkg-config --cflags soxr)
 SOXR_LIBS ?= $(shell pkg-config --libs soxr)
@@ -25,6 +25,10 @@ UNAME_S := $(shell uname -s)
 
 ifneq ($(SDKROOT),)
 CXXFLAGS += -isysroot $(SDKROOT) -isystem $(SDKROOT)/usr/include/c++/v1
+endif
+
+ifeq ($(UNAME_S),Darwin)
+LDFLAGS += -Wl,-dead_strip
 endif
 
 CXXFLAGS += -I$(OPEN_JTALK_INCLUDE_DIR)

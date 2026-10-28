@@ -90,7 +90,7 @@ static std::map<std::string, std::string> createRuntimeSpeakerMorphingPermission
         }
     }
     std::map<std::string, std::string> speakerPermissions;
-    std::map<std::string, std::string> speakerSupportedFeaturesJsons = createCharacterSupportedFeaturesJsons(runtimeState.characterResources);
+    std::map<std::string, std::string> speakerSupportedFeaturesJsons = createCharacterSupportedFeaturesJsons(getCharacterResources(runtimeState));
     bool supportsMorphing = getCoreBackendCapabilities(runtimeState.coreBackend).supportsMorphing;
     for (const StyleRecord &styleRecord : styleRecords) {
         if (speakerPermissions.find(styleRecord.speakerUuid) != speakerPermissions.end()) {

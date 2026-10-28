@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <condition_variable>
@@ -163,11 +164,14 @@ static bool canFallbackToNativeOnnxExportLibrary(NativeOnnxApi &nativeOnnxApi, c
     // GPU 選択後の失敗を CPU 成功に偽装しない。EP 内の通常の部分 CPU 実行とは別。
     if (runtimeState && runtimeState->isGpuExecutionProviderSelected) return false;
     fs::path exportLibraryPath = getNativeOnnxVvBinExportLibraryPath(nativeOnnxApi);
-    return !exportLibraryPath.empty() && exportLibraryPath != nativeOnnxApi.libraryPath && fs::exists(exportLibraryPath);
+    return exportLibraryPath == nativeOnnxApi.libraryPath || (!exportLibraryPath.empty() && fs::exists(exportLibraryPath));
 }
 
-static std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetViaExportLibraryVvBin(NativeOnnxApi &nativeOnnxApi, const ModelAssetRecord &modelAsset, const std::vector<uint8_t> *modelBytes, const std::vector<NativeOnnxTraceInput> &inputTensors, uint16_t cpuThreadCount) {
+static std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetViaExportLibraryVvBin(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const ModelAssetRecord &modelAsset, const std::vector<uint8_t> *modelBytes, const std::vector<NativeOnnxTraceInput> &inputTensors, uint16_t cpuThreadCount) {
     fs::path exportLibraryPath = getNativeOnnxVvBinExportLibraryPath(nativeOnnxApi);
+    if (exportLibraryPath == nativeOnnxApi.libraryPath) {
+        return RunVvBin(nativeOnnxApi, runtimeState, modelAsset, inputTensors, cpuThreadCount, modelBytes);
+    }
     NativeOnnxApi exportOnnxApi = loadNativeOnnxApi(exportLibraryPath);
     try {
         auto outputTensors = RunVvBin(exportOnnxApi, nullptr, modelAsset, inputTensors, cpuThreadCount, modelBytes);
@@ -191,6 +195,9 @@ static fs::path getNativeOnnxExportedModelCachePath(NativeOnnxApi &nativeOnnxApi
                 nativeOnnxExportedModelMemoryHits++;
                 return cacheIterator->second;
             }
+            if (nativeOnnxExportedModelFailedKeys.count(cacheKey)) {
+                throw std::runtime_error("exported ONNX cache を作れません: " + cachePath.string());
+            }
             if (nativeOnnxExportedModelKeysInProgress.find(cacheKey) == nativeOnnxExportedModelKeysInProgress.end()) {
                 nativeOnnxExportedModelMemoryMisses++;
                 nativeOnnxExportedModelKeysInProgress.insert(cacheKey);
@@ -204,11 +211,16 @@ static fs::path getNativeOnnxExportedModelCachePath(NativeOnnxApi &nativeOnnxApi
             storeNativeOnnxExportedModelCacheFileHit();
         } else {
             storeNativeOnnxExportedModelCacheFileMiss();
-            std::vector<uint8_t> optimizedModelBytes = createNativeOnnxExportedModelBytes(nativeOnnxApi, exportLibraryPath, modelAsset, cpuThreadCount);
+            fs::path temporaryPath = cachePath;
+            temporaryPath += ".tmp" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
             try {
-                writeBinaryFile(cachePath, optimizedModelBytes);
+                writeBinaryFile(temporaryPath, {});
+                writeBinaryFile(temporaryPath, createNativeOnnxExportedModelBytes(nativeOnnxApi, exportLibraryPath, modelAsset, cpuThreadCount));
+                fs::rename(temporaryPath, cachePath);
                 storeNativeOnnxExportedModelCacheFileWrite();
             } catch (...) {
+                std::error_code removeError;
+                fs::remove(temporaryPath, removeError);
                 storeNativeOnnxExportedModelCacheFileWriteError();
                 throw;
             }
@@ -224,6 +236,7 @@ static fs::path getNativeOnnxExportedModelCachePath(NativeOnnxApi &nativeOnnxApi
         {
             std::lock_guard<std::mutex> cacheLock(nativeOnnxExportedModelCacheMutex);
             nativeOnnxExportedModelKeysInProgress.erase(cacheKey);
+            nativeOnnxExportedModelFailedKeys.insert(cacheKey);
         }
         nativeOnnxExportedModelCacheCondition.notify_all();
         throw;
@@ -305,6 +318,7 @@ void clearNativeOnnxCaches() {
         std::lock_guard<std::mutex> cacheLock(nativeOnnxExportedModelCacheMutex);
         nativeOnnxExportedModelCache.clear();
         nativeOnnxExportedModelKeysInProgress.clear();
+        nativeOnnxExportedModelFailedKeys.clear();
         nativeOnnxExportedModelMemoryHits = 0;
         nativeOnnxExportedModelMemoryMisses = 0;
         nativeOnnxExportedModelFileHits = 0;
@@ -408,7 +422,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxSingTeacherModelAssetBytes(Native
             if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi, runtimeState)) {
                 throw;
             }
-            outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, modelAsset, nullptr, inputTensors, cpuThreadCount);
+            outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, runtimeState, modelAsset,nullptr, inputTensors, cpuThreadCount);
         }
     }
     writeNativeOnnxTensorTrace(modelAsset, inputTensors, outputTensors);
@@ -438,7 +452,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &na
         if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi, runtimeState)) {
             throw;
         }
-        outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, modelAsset, nullptr, inputTensors, cpuThreadCount);
+        outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, runtimeState, modelAsset,nullptr, inputTensors, cpuThreadCount);
     }
     writeNativeOnnxTensorTrace(modelAsset, inputTensors, outputTensors);
     return outputTensors;
@@ -458,7 +472,7 @@ std::vector<NativeOnnxTraceInput> runNativeOnnxModelAssetBytes(NativeOnnxApi &na
             if (!canFallbackToNativeOnnxExportLibrary(nativeOnnxApi, runtimeState)) {
                 throw;
             }
-            outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, modelAsset, &modelBytes, inputTensors, cpuThreadCount);
+            outputTensors = runNativeOnnxModelAssetViaExportLibraryVvBin(nativeOnnxApi, runtimeState, modelAsset,&modelBytes, inputTensors, cpuThreadCount);
         }
     }
     writeNativeOnnxTensorTrace(modelAsset, inputTensors, outputTensors);

@@ -367,9 +367,9 @@ static void appendNativeOnnxExecutionProvider(NativeOnnxApi &Api, OrtSessionOpti
         return;
     }
     if (Provider == "WebGpuExecutionProvider" && Api.appendExecutionProvider) {
-        const char *Keys[] = {"powerPreference"};
-        const char *Values[] = {"high-performance"};
-        ensureNativeOnnxCall(Api, Api.appendExecutionProvider(Options, "WebGPU", Keys, Values, 1), "WebGPU provider 設定");
+        const char *Keys[] = {"powerPreference", "storageBufferCacheMode"};
+        const char *Values[] = {"high-performance", "simple"};
+        ensureNativeOnnxCall(Api, Api.appendExecutionProvider(Options, "WebGPU", Keys, Values, 2), "WebGPU provider 設定");
         return;
     }
     if (Provider == "CoreMLExecutionProvider") {
@@ -527,6 +527,10 @@ void configureNativeOnnxSessionOptions(NativeOnnxApi &nativeOnnxApi, const Nativ
     if (shouldUseVvBinConfig) {
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.addSessionConfigEntry(sessionOptions, "session.use_vv_bin", "1"), "vv_bin session 設定");
     }
+    if (!runtimeState || runtimeState->selectedExecutionProvider == "CPUExecutionProvider") {
+        ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.DisablePattern(sessionOptions), "memory pattern 無効化");
+    }
+    ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.addSessionConfigEntry(sessionOptions, "session.intra_op.allow_spinning", "0"), "intra op spinning 無効化");
     if (runtimeState) {
         const char *Prefix = std::getenv("LITEVOX_ORT_PROFILE");
         if (Prefix && *Prefix) {

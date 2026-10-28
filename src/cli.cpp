@@ -320,9 +320,9 @@ static int runCommand(const CliOptions &cliOptions) {
             std::cout << "styles\t" << styleCount << "\n";
             std::cout << createModelTable(*runtimeState);
         } else if (cliOptions.commandMode == CommandMode::Singers) {
-            std::cout << createSingersJson(runtimeState->combinedMetasJson, createCharacterSupportedFeaturesJsons(runtimeState->characterResources)) << "\n";
+            std::cout << createSingersJson(runtimeState->combinedMetasJson, createCharacterSupportedFeaturesJsons(getCharacterResources(*runtimeState))) << "\n";
         } else if (cliOptions.commandMode == CommandMode::Speakers) {
-            std::cout << createSpeakersJson(runtimeState->combinedMetasJson, getCoreBackendCapabilities(runtimeState->coreBackend).supportsMorphing, createCharacterSupportedFeaturesJsons(runtimeState->characterResources)) << "\n";
+            std::cout << createSpeakersJson(runtimeState->combinedMetasJson, getCoreBackendCapabilities(runtimeState->coreBackend).supportsMorphing, createCharacterSupportedFeaturesJsons(getCharacterResources(*runtimeState))) << "\n";
         } else if (cliOptions.commandMode == CommandMode::Deps) {
             std::cout << createRuntimeDependencyTable(*runtimeState);
         } else if (cliOptions.commandMode == CommandMode::Devices) {

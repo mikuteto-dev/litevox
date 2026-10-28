@@ -83,6 +83,8 @@ make check
 
 初回実行時に zip と同じディレクトリに `.litevox-runtime-cache/` が自動作成され、必要なランタイムファイルが展開されます。2回目以降はこのキャッシュが再利用されるため、高速に起動します。
 
+各モデルを初めて使うときは、復号した ONNX モデルと ONNX Runtime 形式（`.ort`）のモデルを `model-vvm/.litevox-exported-onnx-cache/` に書き出し、以降はこれを読み込みます（モデル読み込み 約 0.7 秒 → 約 0.03 秒）。書き込めないディレクトリでは従来の読み込みに戻ります。書き出さない場合は `--native-model-mode vv-bin` を指定してください。
+
 ```sh
 dist/litevox tts \
   --runtime /path/to/voicevox-<platform>.zip \
@@ -339,7 +341,7 @@ dist/litevox tts \
 ```
 
 > **macOS での利用時の注意**  
-> macOS 版の VOICEVOX 公式 zip に同梱されている ONNX Runtime は CPU 専用ビルドです。macOS 上で GPU（Metal / WebGPU）を利用する場合は、GPU プロバイダを有効化してビルドした ONNX Runtime ライブラリを `--onnxruntime` オプションで指定してください。
+> macOS 版の VOICEVOX 公式 zip に同梱されている ONNX Runtime は CPU 専用ビルドです。macOS 上で GPU（Metal / WebGPU）を利用する場合は、WebGPU プロバイダを含む ONNX Runtime ライブラリ（公式配布の `onnxruntime-osx-arm64-1.31.0` 以降に同梱）を `--onnxruntime` オプションで指定してください。
 > ```sh
 > LITEVOX_VV_BIN_ONNXRUNTIME=/path/to/runtime-root/libvoicevox_onnxruntime.dylib \
 > dist/litevox tts \

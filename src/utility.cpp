@@ -83,6 +83,10 @@ void writeBinaryFile(const fs::path &filePath, const std::vector<uint8_t> &fileB
         throw std::runtime_error("ファイルを書けません: " + filePath.string());
     }
     outputStream.write(reinterpret_cast<const char *>(fileBytes.data()), static_cast<std::streamsize>(fileBytes.size()));
+    outputStream.close();
+    if (!outputStream) {
+        throw std::runtime_error("ファイルを書けません: " + filePath.string());
+    }
 }
 
 void writeBinaryStdout(const std::vector<uint8_t> &fileBytes) {

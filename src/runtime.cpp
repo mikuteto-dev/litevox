@@ -113,11 +113,14 @@ static void rebuildRuntimeVoiceModelState(RuntimeState &runtimeState) {
     runtimeState.modelAssets = collectVoiceModelAssets(runtimeState.voiceModels);
     buildStyleIndex(runtimeState);
     runtimeState.combinedMetasJson = createCombinedMetasJson(runtimeState.voiceModels);
-    if (runtimeState.hasManifestOverride && fs::exists(runtimeState.manifestPath)) {
-        runtimeState.manifestJson = readTextFile(runtimeState.manifestPath);
-    } else {
-        runtimeState.manifestJson = createRuntimeManifestJson(runtimeState);
+    runtimeState.manifestJson.reset();
+}
+
+const std::string &getRuntimeManifestJson(RuntimeState &runtimeState) {
+    if (!runtimeState.manifestJson) {
+        runtimeState.manifestJson = runtimeState.hasManifestOverride && fs::exists(runtimeState.manifestPath) ? readTextFile(runtimeState.manifestPath) : createRuntimeManifestJson(runtimeState);
     }
+    return *runtimeState.manifestJson;
 }
 
 static bool isLibraryArchivePath(const fs::path &filePath) {
@@ -474,6 +477,13 @@ static void loadVoiceModel(RuntimeState &runtimeState, size_t modelIndex) {
     markSharedStylesLoaded(runtimeState, modelRecord.styleIds);
 }
 
+const CharacterResourceManager &getCharacterResources(const RuntimeState &runtimeState) {
+    if (!runtimeState.characterResources) {
+        runtimeState.characterResources = createCharacterResourceManager(runtimeState.characterResourceDirectory);
+    }
+    return *runtimeState.characterResources;
+}
+
 RuntimeState createRuntimeState(const RuntimePaths &runtimePaths, bool shouldPreload) {
     RuntimeState runtimeState{};
     runtimeState.runtimePaths = runtimePaths;
@@ -499,7 +509,6 @@ RuntimeState createRuntimeState(const RuntimePaths &runtimePaths, bool shouldPre
     runtimeState.engineManifestAssetDirectory = runtimePaths.engineManifestAssetDirectory;
     runtimeState.enableCancellableSynthesis = runtimePaths.enableCancellableSynthesis;
     runtimeState.hasManifestOverride = runtimePaths.hasManifestOverride;
-    runtimeState.characterResources = createCharacterResourceManager(runtimePaths.characterResourceDirectory);
 
     std::vector<fs::path> modelRoots;
     for (const fs::path &modelPath : runtimePaths.modelPaths) {
@@ -511,11 +520,6 @@ RuntimeState createRuntimeState(const RuntimePaths &runtimePaths, bool shouldPre
     runtimeState.modelAssets = collectVoiceModelAssets(runtimeState.voiceModels);
     buildStyleIndex(runtimeState);
     runtimeState.combinedMetasJson = createCombinedMetasJson(runtimeState.voiceModels);
-    if (runtimePaths.hasManifestOverride && fs::exists(runtimePaths.manifestPath)) {
-        runtimeState.manifestJson = readTextFile(runtimePaths.manifestPath);
-    } else {
-        runtimeState.manifestJson = createRuntimeManifestJson(runtimeState);
-    }
     syncInstalledVoiceLibraries(runtimeState);
     if (shouldPreload) {
         loadAllVoiceModels(runtimeState);
@@ -689,7 +693,7 @@ std::string createRuntimeInfoJson(RuntimeState &runtimeState) {
     jsonStream << "\"gpu_mode\":" << (isCoreBackendGpuMode(runtimeState.coreBackend) ? "true" : "false") << ",";
     jsonStream << "\"cpu_threads\":" << getCoreBackendCpuNumThreads(runtimeState.coreBackend) << ",";
     jsonStream << "\"character_resource_directory\":" << quoteJsonString(runtimeState.characterResourceDirectory.string()) << ",";
-    jsonStream << "\"character_resource_count\":" << runtimeState.characterResources.pathHashes.size() << ",";
+    jsonStream << "\"character_resource_count\":" << getCharacterResources(runtimeState).pathHashes.size() << ",";
     jsonStream << "\"user_dict_path\":" << quoteJsonString(runtimeState.coreBackend.userDictPath.string()) << ",";
     jsonStream << "\"preset_path\":" << quoteJsonString(runtimeState.presetPath.string()) << ",";
     jsonStream << "\"setting_path\":" << quoteJsonString(runtimeState.settingPath.string()) << ",";
@@ -848,15 +852,15 @@ void uninstallVoiceLibrary(RuntimeState &runtimeState, const std::string &librar
 }
 
 std::string createRuntimeSpeakerInfoJson(RuntimeState &runtimeState, const std::string &speakerUuid, const std::string &styleGroup, const std::string &resourceFormat, const std::string &resourceBaseUrl) {
-    return createCharacterInfoJson(runtimeState.combinedMetasJson, speakerUuid, styleGroup, runtimeState.characterResources, resourceBaseUrl, resourceFormat);
+    return createCharacterInfoJson(runtimeState.combinedMetasJson, speakerUuid, styleGroup, getCharacterResources(runtimeState), resourceBaseUrl, resourceFormat);
 }
 
 std::vector<uint8_t> readRuntimeCharacterResource(RuntimeState &runtimeState, const std::string &resourceHash) {
-    fs::path resourcePath = getCharacterResourcePath(runtimeState.characterResources, resourceHash);
+    fs::path resourcePath = getCharacterResourcePath(getCharacterResources(runtimeState), resourceHash);
     std::string resourceBytes = readTextFile(resourcePath);
     return std::vector<uint8_t>(resourceBytes.begin(), resourceBytes.end());
 }
 
 std::string getRuntimeCharacterResourceContentType(RuntimeState &runtimeState, const std::string &resourceHash) {
-    return getCharacterResourceContentType(getCharacterResourcePath(runtimeState.characterResources, resourceHash));
+    return getCharacterResourceContentType(getCharacterResourcePath(getCharacterResources(runtimeState), resourceHash));
 }

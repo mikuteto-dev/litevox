@@ -87,29 +87,11 @@ static bool isNativeBackendMode(const CoreBackendState &backendState) {
     return isNativeBackendMode(backendState.backendMode);
 }
 
-static fs::path getNativeBackendExportOnnxruntimePath(const fs::path &defaultOnnxruntimeLibraryPath) {
-    const char *exportOnnxruntimeText = std::getenv("LITEVOX_VV_BIN_ONNXRUNTIME");
-    if (!exportOnnxruntimeText || exportOnnxruntimeText[0] == '\0') {
-        return defaultOnnxruntimeLibraryPath;
-    }
-    return fs::path(exportOnnxruntimeText);
-}
-
-static std::string resolveNativeModelMode(const CoreBackendPaths &backendPaths, const std::string &normalizedBackendMode, const std::string &normalizedAccelerationMode, const std::string &normalizedNativeModelMode) {
-    if (normalizedBackendMode == "minimal-ort") {
+static std::string resolveNativeModelMode(const std::string &normalizedBackendMode, const std::string &normalizedNativeModelMode) {
+    if (normalizedBackendMode == "minimal-ort" || normalizedNativeModelMode == "auto") {
         return "exported_onnx";
     }
-    if (normalizedNativeModelMode != "auto") {
-        return normalizedNativeModelMode;
-    }
-    if (normalizedAccelerationMode == "gpu") {
-        return "exported_onnx";
-    }
-    fs::path exportOnnxruntimeLibraryPath = getNativeBackendExportOnnxruntimePath(backendPaths.onnxruntimeLibraryPath);
-    if (!exportOnnxruntimeLibraryPath.empty() && exportOnnxruntimeLibraryPath != backendPaths.onnxruntimeLibraryPath) {
-        return "exported_onnx";
-    }
-    return "vv_bin";
+    return normalizedNativeModelMode;
 }
 
 static void ensureImplementedBackendOperation(const CoreBackendState &backendState, const std::string &operationName) {
@@ -149,7 +131,7 @@ CoreBackendState createCoreBackendState(const CoreBackendPaths &backendPaths) {
         backendState.userDictPath = backendPaths.userDictPath;
         backendState.nativeOnnxRuntime = createNativeOnnxRuntimeState(backendPaths.onnxruntimeLibraryPath, normalizedAccelerationMode);
         backendState.accelerationMode = normalizedAccelerationMode;
-        backendState.nativeModelMode = resolveNativeModelMode(backendPaths, normalizedBackendMode, backendState.nativeOnnxRuntime.isGpuExecutionProviderSelected ? "gpu" : normalizedAccelerationMode, normalizedNativeModelMode);
+        backendState.nativeModelMode = resolveNativeModelMode(normalizedBackendMode, normalizedNativeModelMode);
         return backendState;
     }
     ensurePathExists(backendPaths.coreLibraryPath, "core library");

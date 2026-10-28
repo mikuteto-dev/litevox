@@ -186,11 +186,11 @@ static HttpResponse routeRequest(RuntimeState &runtimeState, const HttpRequest &
     }
     if (request.path == "/speakers") {
         requireMethod(request, {"GET"});
-        return makeJsonResponse(createSpeakersJson(runtimeState.combinedMetasJson, getCoreBackendCapabilities(runtimeState.coreBackend).supportsMorphing, createCharacterSupportedFeaturesJsons(runtimeState.characterResources)));
+        return makeJsonResponse(createSpeakersJson(runtimeState.combinedMetasJson, getCoreBackendCapabilities(runtimeState.coreBackend).supportsMorphing, createCharacterSupportedFeaturesJsons(getCharacterResources(runtimeState))));
     }
     if (request.path == "/singers") {
         requireMethod(request, {"GET"});
-        return makeJsonResponse(createSingersJson(runtimeState.combinedMetasJson, createCharacterSupportedFeaturesJsons(runtimeState.characterResources)));
+        return makeJsonResponse(createSingersJson(runtimeState.combinedMetasJson, createCharacterSupportedFeaturesJsons(getCharacterResources(runtimeState))));
     }
     if (request.path == "/speaker_info") {
         requireMethod(request, {"GET"});
@@ -238,7 +238,7 @@ static HttpResponse routeRequest(RuntimeState &runtimeState, const HttpRequest &
     }
     if (request.path == "/engine_manifest") {
         requireMethod(request, {"GET"});
-        return makeJsonResponse(runtimeState.manifestJson);
+        return makeJsonResponse(getRuntimeManifestJson(runtimeState));
     }
     if (request.path == "/supported_devices") {
         requireMethod(request, {"GET"});

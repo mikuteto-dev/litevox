@@ -40,6 +40,7 @@ struct OrtApiBase {
 inline constexpr uint32_t ortApiVersion = 17;
 inline constexpr int32_t ortLoggingLevelWarning = 2;
 inline constexpr int32_t ortGraphOptimizationLevelBasic = 1;
+inline constexpr int32_t ortGraphOptimizationLevelExtended = 2;
 inline constexpr int64_t nativeOnnxPhonemeSize = 45;
 inline constexpr size_t nativeOnnxDecoderPaddingFrames = 38;
 inline constexpr size_t nativeOnnxDecoderMinimumChunkFrames = 128;
@@ -334,6 +335,7 @@ struct NativeOnnxCachedSession {
     OrtReleaseSessionFunction releaseSession = nullptr;
     std::vector<NativeOnnxValueDescriptor> inputDescriptors;
     std::vector<NativeOnnxValueDescriptor> outputDescriptors;
+    std::shared_ptr<const void> ModelMapping;
 
     ~NativeOnnxCachedSession() {
         if (FinishProfile) FinishProfile();
@@ -376,6 +378,7 @@ extern std::mutex nativeOnnxExportedModelCacheMutex;
 extern std::condition_variable nativeOnnxExportedModelCacheCondition;
 extern std::map<std::string, fs::path> nativeOnnxExportedModelCache;
 extern std::set<std::string> nativeOnnxExportedModelKeysInProgress;
+extern std::set<std::string> nativeOnnxExportedModelFailedKeys;
 extern uint64_t nativeOnnxExportedModelMemoryHits;
 extern uint64_t nativeOnnxExportedModelMemoryMisses;
 extern uint64_t nativeOnnxExportedModelFileHits;

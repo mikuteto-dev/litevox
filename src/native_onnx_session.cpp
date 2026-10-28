@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <charconv>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -31,6 +32,13 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 std::string getNativeOnnxVersion(const NativeOnnxApi &nativeOnnxApi) {
     if (!nativeOnnxApi.apiBase || !nativeOnnxApi.apiBase->getVersionString) {
@@ -152,6 +160,7 @@ std::mutex nativeOnnxExportedModelCacheMutex;
 std::condition_variable nativeOnnxExportedModelCacheCondition;
 std::map<std::string, fs::path> nativeOnnxExportedModelCache;
 std::set<std::string> nativeOnnxExportedModelKeysInProgress;
+std::set<std::string> nativeOnnxExportedModelFailedKeys;
 uint64_t nativeOnnxExportedModelMemoryHits = 0;
 uint64_t nativeOnnxExportedModelMemoryMisses = 0;
 uint64_t nativeOnnxExportedModelFileHits = 0;
@@ -321,6 +330,78 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
     }
 }
 
+#if !defined(_WIN32)
+static fs::path getOrtFormatModelPath(const NativeOnnxApi &Api, const fs::path &ModelPath) {
+    std::error_code SizeError;
+    std::error_code TimeError;
+    std::string Identity = Api.libraryPath.string() + "\t" + std::to_string(fs::file_size(Api.libraryPath, SizeError)) + "\t" + std::to_string(static_cast<long long>(fs::last_write_time(Api.libraryPath, TimeError).time_since_epoch().count()));
+    fs::path OrtPath = ModelPath;
+    OrtPath += "-" + createSha256Hex(reinterpret_cast<const uint8_t *>(Identity.data()), Identity.size()).substr(0, 16) + ".ort";
+    return OrtPath;
+}
+
+static void saveOrtFormatModel(NativeOnnxApi &Api, const NativeOnnxRuntimeState *State, OrtEnv *Env, const fs::path &ModelPath, const fs::path &OrtPath, uint16_t Threads) {
+    fs::path Temporary = OrtPath;
+    Temporary += ".tmp" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    OrtSessionOptions *Options = nullptr;
+    OrtSession *Session = nullptr;
+    try {
+        writeBinaryFile(Temporary, {});
+        ensureNativeOnnxCall(Api, Api.createSessionOptions(&Options), "SessionOptions 作成");
+        configureNativeOnnxSessionOptions(Api, State, Options, Threads, false);
+        ensureNativeOnnxCall(Api, Api.setSessionGraphOptimizationLevel(Options, ortGraphOptimizationLevelExtended), "graph optimization 設定");
+        ensureNativeOnnxCall(Api, Api.addSessionConfigEntry(Options, "session.save_model_format", "ORT"), "ORT format 保存設定");
+        ensureNativeOnnxCall(Api, Api.setOptimizedModelFilePath(Options, Temporary.c_str()), "ORT format 保存先設定");
+        ensureNativeOnnxCall(Api, Api.createSession(Env, ModelPath.c_str(), Options, &Session), "ORT format 保存");
+        fs::rename(Temporary, OrtPath);
+    } catch (...) {
+    }
+    if (Session) Api.releaseSession(Session);
+    if (Options) Api.releaseSessionOptions(Options);
+    std::error_code RemoveError;
+    fs::remove(Temporary, RemoveError);
+}
+
+static std::shared_ptr<const void> mapOrtFormatModel(const fs::path &OrtPath, size_t &Size) {
+    int Fd = open(OrtPath.c_str(), O_RDONLY | O_CLOEXEC);
+    if (Fd < 0) return nullptr;
+    struct stat Info {};
+    void *Mapping = MAP_FAILED;
+    if (fstat(Fd, &Info) == 0 && Info.st_size > 0) {
+        Size = static_cast<size_t>(Info.st_size);
+        Mapping = mmap(nullptr, Size, PROT_READ, MAP_PRIVATE, Fd, 0);
+    }
+    close(Fd);
+    if (Mapping == MAP_FAILED) return nullptr;
+    return std::shared_ptr<const void>(Mapping, [Size](const void *Pointer) { munmap(const_cast<void *>(Pointer), Size); });
+}
+
+static bool createOrtFormatSession(NativeOnnxApi &Api, const NativeOnnxRuntimeState *State, const fs::path &ModelPath, uint16_t Threads, NativeOnnxCachedSession &Cached) {
+    if (!State || State->selectedExecutionProvider != "CPUExecutionProvider") return false;
+    fs::path OrtPath = getOrtFormatModelPath(Api, ModelPath);
+    if (!fs::exists(OrtPath)) saveOrtFormatModel(Api, State, Cached.env, ModelPath, OrtPath, Threads);
+    size_t Size = 0;
+    std::shared_ptr<const void> Mapping = mapOrtFormatModel(OrtPath, Size);
+    if (!Mapping) return false;
+    OrtSessionOptions *Options = nullptr;
+    try {
+        ensureNativeOnnxCall(Api, Api.createSessionOptions(&Options), "SessionOptions 作成");
+        configureNativeOnnxSessionOptions(Api, State, Options, Threads, false);
+        ensureNativeOnnxCall(Api, Api.addSessionConfigEntry(Options, "session.load_model_format", "ORT"), "ORT format 読み込み設定");
+        ensureNativeOnnxCall(Api, Api.addSessionConfigEntry(Options, "session.use_ort_model_bytes_directly", "1"), "ORT format 読み込み設定");
+        ensureNativeOnnxCall(Api, Api.createSessionFromArray(Cached.env, Mapping.get(), Size, Options, &Cached.session), "ORT format 読み込み");
+        Api.releaseSessionOptions(Options);
+        Cached.ModelMapping = std::move(Mapping);
+        return true;
+    } catch (...) {
+        if (Options) Api.releaseSessionOptions(Options);
+        std::error_code RemoveError;
+        fs::remove(OrtPath, RemoveError);
+        return false;
+    }
+}
+#endif
+
 std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnnxApi &nativeOnnxApi, const NativeOnnxRuntimeState *runtimeState, const fs::path &modelPath, uint16_t cpuThreadCount, bool shouldUseVvBinConfig) {
     std::shared_ptr<NativeOnnxCachedSession> cachedSession = std::make_shared<NativeOnnxCachedSession>();
     OrtSessionOptions *sessionOptions = nullptr;
@@ -339,6 +420,9 @@ std::shared_ptr<NativeOnnxCachedSession> createNativeOnnxCachedSession(NativeOnn
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createSessionOptions(&sessionOptions), "SessionOptions 作成");
         configureNativeOnnxSessionOptions(nativeOnnxApi, runtimeState, sessionOptions, cpuThreadCount, shouldUseVvBinConfig);
         applyNativeOnnxSeedIfConfigured(nativeOnnxApi);
+#if !defined(_WIN32)
+        if (!createOrtFormatSession(nativeOnnxApi, runtimeState, modelPath, cpuThreadCount, *cachedSession))
+#endif
         ensureNativeOnnxCall(nativeOnnxApi, nativeOnnxApi.createSession(cachedSession->env, modelPath.c_str(), sessionOptions, &cachedSession->session), "ONNX session 作成");
         size_t inputCount = 0;
         size_t outputCount = 0;
